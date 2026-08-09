@@ -122,8 +122,12 @@ verify:
 	@curl -sS -o /dev/null -w '  http://localhost/   -> HTTP %{http_code}\n' --max-time 10 http://localhost/
 	@curl -sS -o /dev/null -w '  https://localhost/  -> HTTP %{http_code}  (%{ssl_verify_result} = verified)\n' --max-time 10 https://localhost/
 
+## test-tls: capture the traffic and prove https encrypts it
+test-tls:
+	@./tests/tls-proof.sh $(CLUSTER)
+
 ## down: delete the cluster
 down:
 	@kind delete cluster --name $(CLUSTER)
 
-.PHONY: help cluster namespaces gateway-api istio tls gateway images apps up verify down
+.PHONY: help cluster namespaces gateway-api istio tls gateway images apps up verify test-tls down

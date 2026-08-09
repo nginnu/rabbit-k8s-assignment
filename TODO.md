@@ -26,13 +26,13 @@ Acceptance criteria in [docs/goals.md](docs/goals.md).
 - [ ] probes and resource limits on every container
 - [ ] verify: a request goes through every service and comes back
 
-## 4. Ingress + TLS
+## 4. Ingress + TLS ✅
 
 - [x] gateway on 80/443
 - [x] cert-manager issuing from a local CA
 - [x] one route per service
 - [x] verify: `https://` with no browser warning
-- [ ] verify: a test checks the traffic has no plaintext credentials
+- [x] verify: a test checks the traffic has no plaintext credentials
 
 ## 5. Observability — LGTM + OpenTelemetry
 
