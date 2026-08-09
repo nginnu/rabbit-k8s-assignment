@@ -1,0 +1,11 @@
+# Namespaces for the stack.
+#
+# Environments are separated by cluster, never by namespace prefix, so nothing
+# here carries "local" or "dev" in its name — the same manifest applies wherever
+# the cluster happens to run.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo
+  labels:
+    app.kubernetes.io/part-of: platform

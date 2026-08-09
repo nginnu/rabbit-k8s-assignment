@@ -1,0 +1,46 @@
+# kind cluster config.
+#
+# Three settings that matter:
+#
+#   multi-node          PodDisruptionBudget and topology spread only mean
+#                       something with more than one node. On a single node the
+#                       second replica stays Pending and a drain never
+#                       succeeds.
+#
+#   extraPortMappings   maps host 80/443 into the cluster so an ingress gateway
+#                       can be reached the same way a browser would, instead of
+#                       through port-forward.
+#
+#   disableDefaultCNI   false — keep kindnet. Swapping the CNI locally would
+#                       test a network stack we do not run anywhere else.
+#
+apiVersion: kind.x-k8s.io/v1alpha4
+kind: Cluster
+# No name here on purpose — kind takes it from --name, which the Makefile
+# passes from CLUSTER. If a name is set here it overrides the flag, and
+# `make up CLUSTER=other` would have no effect.
+
+networking:
+  disableDefaultCNI: false
+  kubeProxyMode: iptables
+
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      # Marks this node as the ingress host, so an ingress Service can be pinned
+      # here and the host port mappings below actually receive traffic.
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+    extraPortMappings:
+      - containerPort: 80
+        hostPort: 80
+        protocol: TCP
+      - containerPort: 443
+        hostPort: 443
+        protocol: TCP
+
+  - role: worker
+  - role: worker

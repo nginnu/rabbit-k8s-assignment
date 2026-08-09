@@ -1,0 +1,9 @@
+apiVersion: v2
+name: platform-service
+description: |
+  Library chart — the shared template that every application service on this
+  platform is rendered from. Installed only as a dependency of a chart under
+  charts/apps/, never on its own (type: library).
+type: library
+version: 0.1.0
+appVersion: "0.1.0"

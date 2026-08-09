@@ -1,0 +1,32 @@
+# Helm dependency output — `helm dependency update` vendors the library chart
+# and writes a lock. Both are reproducible from Chart.yaml, and committing the
+# vendored copy means the library exists twice with nothing keeping them equal.
+charts/*/*/charts/
+charts/*/*/Chart.lock
+
+# Assistant configuration — local working setup, not part of the deliverable.
+# These describe how this repository is worked on rather than what it does, and
+# they belong to the machine, not the project.
+CLAUDE.md
+AGENTS.md
+WORKING-RULES.md
+.claude/
+.codex/
+.cursor/
+.cursorrules
+.aider*
+.github/copilot-instructions.md
+
+# Credentials — never commit
+*.pem
+*.key
+kubeconfig
+kubeconfig-*
+.env
+.env.*
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
