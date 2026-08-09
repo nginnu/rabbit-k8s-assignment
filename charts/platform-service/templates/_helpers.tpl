@@ -32,8 +32,8 @@ The full image reference: repository:tag. `svc` carries the image block.
 {{/*
 Hardened securityContext.
 
-Two fields vary and both default to the strict value, so a service opts out
-deliberately rather than inheriting a weaker setting by accident:
+Two fields can be set per service. Both default to the strict value, so a
+service has to opt out explicitly:
 
   uid                      the image's own user; kubelet needs the number
   readOnlyRootFilesystem   false only where the runtime genuinely writes into

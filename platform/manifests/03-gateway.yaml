@@ -1,0 +1,79 @@
+# The entry point.
+#
+# Istio creates the Envoy deployment and Service from this Gateway object —
+# there is no separate ingress controller to install.
+#
+# gatewayClassName is the only line naming an implementation. Switching to
+# envoy-gateway, nginx or a cloud class does not change any HTTPRoute.
+#
+# The ConfigMap below pins Envoy to the node where kind mapped host ports
+# 80/443, and binds those ports. On a cloud cluster the Service would be a
+# LoadBalancer and none of this is needed.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: platform-gateway-options
+  namespace: istio-system
+data:
+  deployment: |
+    spec:
+      template:
+        spec:
+          nodeSelector:
+            ingress-ready: "true"
+          tolerations:
+            - key: node-role.kubernetes.io/control-plane
+              operator: Exists
+              effect: NoSchedule
+          containers:
+            - name: istio-proxy
+              ports:
+                - containerPort: 80
+                  hostPort: 80
+                - containerPort: 443
+                  hostPort: 443
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: platform
+  namespace: istio-system
+  annotations:
+    # kind maps host 80/443 to the control-plane node, so the Envoy pod has to
+    # run there. On a cloud cluster this becomes a LoadBalancer Service.
+    networking.istio.io/service-type: NodePort
+spec:
+  gatewayClassName: istio
+  infrastructure:
+    parametersRef:
+      group: ""
+      kind: ConfigMap
+      name: platform-gateway-options
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        # Routes live in the app namespace, beside the service they expose.
+        namespaces:
+          from: All
+    # HTTPS on the same Gateway. Routes do not change — anything already
+    # attached is served over both listeners.
+    #
+    # Port 80 stays open instead of redirecting, so the plaintext path is still
+    # there to compare against when testing that TLS actually encrypts. A
+    # production gateway would add a RequestRedirect filter.
+    - name: https
+      protocol: HTTPS
+      port: 443
+      tls:
+        # Terminate here. The certificate is a Secret in this namespace,
+        # created by cert-manager from 02-certificates.yaml. Istio reads it by
+        # name and does not care which issuer signed it, so switching the local
+        # CA for Let's Encrypt later does not touch this file.
+        mode: Terminate
+        certificateRefs:
+          - name: platform-tls
+      allowedRoutes:
+        namespaces:
+          from: All

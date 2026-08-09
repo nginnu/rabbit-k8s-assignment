@@ -1,0 +1,24 @@
+# Values for the istiod chart, sized for a local cluster.
+
+pilot:
+  # Everything shares three Docker containers here, so istiod does not get
+  # production sizing. Small, but not so small it gets OOM-killed.
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  autoscaleEnabled: false
+
+meshConfig:
+  # Access logs to stdout — the quickest way to see which route a request
+  # actually took when it goes somewhere unexpected.
+  accessLogFile: /dev/stdout
+  defaultConfig:
+    proxyMetadata: {}
+
+# Sidecar injection is off. Namespaces opt in with a label when we need it.
+# Ingress routing is working first, so a broken request has one place to look
+# instead of two.

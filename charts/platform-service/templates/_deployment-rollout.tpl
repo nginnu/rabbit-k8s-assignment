@@ -83,10 +83,9 @@ spec:
             {{- end }}
           {{- with $svc.probes }}
           {{/*
-            hasKey rather than `default` on the delays: Go templates treat 0 as
-            empty, so `default 10` silently rewrites an explicit "start probing
-            immediately" into a ten second wait. A service that answers at once
-            has no way to say so otherwise.
+            hasKey instead of `default` for the delays. Go templates treat 0 as
+            empty, so `default 10` would turn an explicit 0 into a 10 second
+            wait and a service that is ready immediately could not say so.
           */}}
           livenessProbe:
             httpGet:

@@ -2,10 +2,8 @@
 NetworkPolicy — off by default, declared here so the schema is complete and a
 service can opt in without a template change later.
 
-When `networkPolicy: true`, a default-deny ingress policy is rendered. The
-allow-list — which services may talk to which — is layered on top of the deny
-once there is more than one service to isolate from another; a deny with
-nothing to permit is the honest starting point.
+When `networkPolicy: true` this renders a default-deny ingress policy. Allow
+rules get added on top once there is more than one service to isolate.
 
 Named template — a service chart calls it via
 `include "platform-service.networkpolicy" .`.

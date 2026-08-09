@@ -1,0 +1,22 @@
+# Routes.
+#
+# HTTPRoutes live in the app namespace, next to the service they expose. The
+# Gateway belongs to the platform; each service owns its own route.
+#
+# When more routes are added, order matters: the most specific prefix wins and
+# / must be last, or it catches everything.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: dummy
+  namespace: demo
+spec:
+  parentRefs:
+    - name: platform
+      namespace: istio-system
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: / }
+      backendRefs:
+        - name: dummy
+          port: 80
