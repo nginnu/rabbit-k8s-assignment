@@ -93,8 +93,21 @@ else
   bad "$failures of 10 requests failed during the replacement"
 fi
 
-kubectl -n "$NS" rollout status deployment/order-svc --timeout=120s >/dev/null 2>&1
-replicas=$(kubectl -n "$NS" get deployment order-svc -o jsonpath='{.status.readyReplicas}' 2>/dev/null)
+# Pods, not the controller: order-svc is an Argo Rollout, the others are still
+# Deployments, and both write the same app.kubernetes.io/name label from the
+# shared chart template. Counting Ready pods works for either kind without a
+# branch, and does not break the next time a service changes kind — `kubectl
+# rollout status deployment/...` only understands Deployments, and a Rollout's
+# equivalent needs the kubectl-argo-rollouts plugin, a dependency this suite
+# does not otherwise take on.
+replicas=0
+for _ in $(seq 1 60); do
+  replicas=$(kubectl -n "$NS" get pods -l app.kubernetes.io/name=order-svc \
+    -o jsonpath='{range .items[*]}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}' 2>/dev/null \
+    | grep -c '^True')
+  [ "$replicas" -eq 2 ] && break
+  sleep 2
+done
 expect "back to two replicas   " 2 "$replicas"
 
 summary
