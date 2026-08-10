@@ -195,12 +195,34 @@ observability: namespaces
 	@kubectl -n observability rollout status statefulset/loki --timeout=180s
 	@kubectl apply -f $(MANIFESTS)/08-grafana-route.yaml
 
-## up: cluster, gateway, images, observability, apps
+ROLLOUTS_VERSION     := 2.41.1
+# The controller image tag, which is what a running cluster reports. The chart
+# version is not recoverable from the Deployment.
+ROLLOUTS_APP_VERSION := v1.9.1
+
+## rollouts: install the Argo Rollouts controller
+rollouts: namespaces
+	@helm repo add argo https://argoproj.github.io/argo-helm >/dev/null 2>&1 || true
+	@helm repo update argo >/dev/null
+	@helm upgrade --install argo-rollouts argo/argo-rollouts \
+		-n argo-rollouts --create-namespace --version $(ROLLOUTS_VERSION)
+	@kubectl -n argo-rollouts rollout status deployment/argo-rollouts --timeout=180s
+	@# Helm does not upgrade CRDs that already exist, so a cluster carrying an
+	@# older bundle drops canary and analysis fields at admission and the Rollout
+	@# still looks correct in git.
+	@./platform/scripts/check-version.sh argo-rollouts $(ROLLOUTS_APP_VERSION) \
+		"$$(kubectl -n argo-rollouts get deploy argo-rollouts \
+			-o jsonpath='{.spec.template.spec.containers[0].image}' | sed 's/.*://')"
+
+## up: cluster, gateway, images, observability, rollouts, apps
 up: cluster gateway images
 	@# Observability first only so the first requests are captured. The services
 	@# do not depend on it: the OTel SDK logs an export failure and carries on,
 	@# so a missing collector costs telemetry, not availability.
 	@$(MAKE) --no-print-directory observability
+	@# Before apps, not after: once a service is a Rollout, its chart fails to
+	@# render against a cluster where the CRD is not registered yet.
+	@$(MAKE) --no-print-directory rollouts
 	@$(MAKE) --no-print-directory apps
 	@$(MAKE) --no-print-directory verify
 
@@ -261,6 +283,6 @@ down:
 	@kind delete cluster --name $(CLUSTER)
 
 .PHONY: help cluster namespaces gateway-api istio tls gateway secrets app-secrets \
-        sql data images observability apps up verify down \
+        sql data images observability rollouts apps up verify down \
         test test-routing test-auth test-checkout test-resilience test-tls \
         test-o11y test-journey
