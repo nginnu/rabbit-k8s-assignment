@@ -1,0 +1,73 @@
+# prometheus-community/prometheus
+#
+# A remote-write receiver, not a scraper. Alloy pushes everything; the only
+# scrape target is Prometheus itself.
+#
+# kube-prometheus-stack was not used: it pulls Grafana in as a dependency, which
+# would collide with the grafana release that owns our datasources, and it brings
+# an Operator, CRDs, Alertmanager and exporters that nothing here reads.
+
+server:
+  # Off by default. Without it Alloy's writes get a 404 and no metric ever
+  # arrives, with nothing in any log to say why.
+  extraFlags:
+    - web.enable-remote-write-receiver
+
+  # The chart writes the global block from here.
+  global:
+    scrape_interval: 15s
+    evaluation_interval: 15s
+    external_labels:
+      cluster: rabbitshop
+      source: prometheus
+
+  persistentVolume:
+    enabled: false
+
+  retention: 6h
+
+  resources:
+    requests: { cpu: 50m, memory: 256Mi }
+    limits: { cpu: 500m, memory: 1Gi }
+
+# The chart's default scrape jobs, each disabled by name. Nothing here is
+# scraped — Alloy pushes everything — and leaving them on means a dozen
+# kubernetes_sd jobs failing against RBAC this release does not grant.
+#
+# `prometheus` stays: it makes "is Prometheus alive" answerable from Prometheus.
+scrapeConfigs:
+  kubernetes-api-servers:
+    enabled: false
+  kubernetes-nodes:
+    enabled: false
+  kubernetes-nodes-cadvisor:
+    enabled: false
+  kubernetes-pods:
+    enabled: false
+  kubernetes-pods-slow:
+    enabled: false
+  kubernetes-service-endpoints:
+    enabled: false
+  kubernetes-service-endpoints-slow:
+    enabled: false
+  kubernetes-services:
+    enabled: false
+  prometheus-pushgateway:
+    enabled: false
+
+serverFiles:
+  prometheus.yml:
+    # No `global` here. The chart writes its own from server.global above and
+    # then appends this file, so a second one makes Prometheus exit with
+    # "field global already set in type config.plain".
+    rule_files: []
+
+# Nothing in this project reads any of these.
+alertmanager:
+  enabled: false
+prometheus-pushgateway:
+  enabled: false
+prometheus-node-exporter:
+  enabled: false
+kube-state-metrics:
+  enabled: false

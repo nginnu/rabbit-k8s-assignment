@@ -154,8 +154,57 @@ apps: data app-secrets
 		kubectl -n demo rollout status deployment/$$d --timeout=180s; \
 	done
 
-## up: cluster, gateway, images, apps
+# Upstream charts. We own the values files and nothing else.
+#
+# prometheus-community/prometheus rather than kube-prometheus-stack: the stack
+# pulls Grafana in as a dependency, which collides with the grafana release that
+# owns our datasources, and brings an Operator, CRDs, Alertmanager and exporters
+# that nothing here reads. Our Prometheus receives remote-write and scrapes
+# nothing.
+PROMETHEUS_VERSION := 29.23.0
+LOKI_VERSION       := 7.2.0
+TEMPO_VERSION      := 1.24.4
+ALLOY_VERSION      := 1.11.1
+GRAFANA_VERSION    := 10.5.15
+
+OBS_VALUES := platform/addons/observability/values
+
+## observability: prometheus, loki, tempo, alloy and grafana
+observability: namespaces
+	@kubectl apply -f $(MANIFESTS)/07-observability.yaml
+	@helm repo add prometheus-community https://prometheus-community.github.io/helm-charts >/dev/null 2>&1 || true
+	@helm repo add grafana https://grafana.github.io/helm-charts >/dev/null 2>&1 || true
+	@helm repo update prometheus-community grafana >/dev/null
+	@# The dashboard is a file rather than a values blob so it stays valid JSON
+	@# that Grafana can export back into.
+	@kubectl -n observability create configmap grafana-dashboards \
+		--from-file=platform.json=platform/addons/observability/dashboard.json \
+		--dry-run=client -o yaml | kubectl apply -f -
+	@helm upgrade --install prometheus prometheus-community/prometheus \
+		-n observability --version $(PROMETHEUS_VERSION) -f $(OBS_VALUES)/prometheus.yaml
+	@helm upgrade --install loki grafana/loki \
+		-n observability --version $(LOKI_VERSION) -f $(OBS_VALUES)/loki.yaml
+	@helm upgrade --install tempo grafana/tempo \
+		-n observability --version $(TEMPO_VERSION) -f $(OBS_VALUES)/tempo.yaml
+	@helm upgrade --install alloy grafana/alloy \
+		-n observability --version $(ALLOY_VERSION) -f $(OBS_VALUES)/alloy.yaml
+	@helm upgrade --install grafana grafana/grafana \
+		-n observability --version $(GRAFANA_VERSION) -f $(OBS_VALUES)/grafana.yaml
+	@kubectl -n observability rollout status deployment/alloy --timeout=180s
+	@kubectl -n observability rollout status deployment/grafana --timeout=180s
+	@kubectl -n observability rollout status statefulset/loki --timeout=180s
+	@# The alias Service is what the applications resolve. Empty endpoints here
+	@# means every service is about to fail its first start.
+	@kubectl -n observability wait --for=jsonpath='{.subsets[0].addresses}' \
+		endpoints/otel-collector --timeout=120s
+	@kubectl apply -f $(MANIFESTS)/08-grafana-route.yaml
+
+## up: cluster, gateway, images, observability, apps
 up: cluster gateway images
+	@# Observability first only so the first requests are captured. The services
+	@# do not depend on it: the OTel SDK logs an export failure and carries on,
+	@# so a missing collector costs telemetry, not availability.
+	@$(MAKE) --no-print-directory observability
 	@$(MAKE) --no-print-directory apps
 	@$(MAKE) --no-print-directory verify
 
@@ -199,6 +248,14 @@ test-checkout:
 test-resilience:
 	@./tests/resilience.sh
 
+## test-o11y: the observability stack is up and receiving
+test-o11y:
+	@./tests/o11y-stack.sh
+
+## test-journey: follow one purchase from log to trace to metric
+test-journey:
+	@./tests/o11y-journey.sh
+
 ## test-tls: capture the traffic and prove https encrypts it
 test-tls:
 	@./tests/tls-proof.sh $(CLUSTER)
@@ -208,5 +265,6 @@ down:
 	@kind delete cluster --name $(CLUSTER)
 
 .PHONY: help cluster namespaces gateway-api istio tls gateway secrets app-secrets \
-        sql data images apps up verify down \
-        test test-routing test-auth test-checkout test-resilience test-tls
+        sql data images observability apps up verify down \
+        test test-routing test-auth test-checkout test-resilience test-tls \
+        test-o11y test-journey

@@ -1,0 +1,122 @@
+# grafana/grafana
+#
+# Served at /grafana through the gateway. Datasources are provisioned here so
+# the Tempo-to-Loki and Prometheus-to-Tempo links exist without anyone
+# configuring them by hand.
+
+replicas: 1
+
+persistence:
+  enabled: false
+
+resources:
+  requests: { cpu: 50m, memory: 128Mi }
+  limits: { cpu: 500m, memory: 512Mi }
+
+# Unused: the login form is disabled below.
+adminPassword: ""
+
+grafana.ini:
+  # Anonymous admin. This is a laptop, and a login prompt between an engineer
+  # and their traces is friction with nothing behind it.
+  auth.anonymous:
+    enabled: true
+    org_role: Admin
+  auth:
+    disable_login_form: true
+  server:
+    # root_url carries the prefix so generated links are right from the
+    # browser's side. serve_from_sub_path stays false because the gateway
+    # already strips /grafana — with both on, links become /grafana/grafana.
+    root_url: http://localhost/grafana/
+    serve_from_sub_path: false
+  analytics:
+    reporting_enabled: false
+    check_for_updates: false
+
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        uid: prometheus
+        access: proxy
+        # The chart's service, not prometheus:9090.
+        url: http://prometheus-server.observability.svc.cluster.local:80
+        isDefault: true
+        jsonData:
+          httpMethod: POST
+          timeInterval: 15s
+          # Click an exemplar on a latency graph, land on the trace.
+          exemplarTraceIdDestinations:
+            - name: traceID
+              datasourceUid: tempo
+
+      - name: Loki
+        type: loki
+        uid: loki
+        access: proxy
+        url: http://loki.observability.svc.cluster.local:3100
+        jsonData:
+          # Turns a trace id in a log line into a link to that trace. Two
+          # patterns because logs arrive both as JSON and as logfmt.
+          derivedFields:
+            - name: TraceID
+              matcherRegex: '"traceid":"(\w+)"'
+              datasourceUid: tempo
+              url: "$${__value.raw}"
+            - name: TraceID
+              matcherRegex: 'traceid=(\w+)'
+              datasourceUid: tempo
+              url: "$${__value.raw}"
+
+      - name: Tempo
+        type: tempo
+        uid: tempo
+        access: proxy
+        url: http://tempo.observability.svc.cluster.local:3200
+        jsonData:
+          # From a span, find its logs. The query filters by
+          # deployment_environment, which only exists because Alloy derives it —
+          # see values/alloy.yaml.
+          tracesToLogsV2:
+            datasourceUid: loki
+            spanStartTimeShift: "-1h"
+            spanEndTimeShift: "1h"
+            filterByTraceID: true
+            filterBySpanID: false
+            customQuery: true
+            query: '{deployment_environment="$${__span.tags.deployment_environment}"} | json | traceid = `$${__span.traceId}`'
+          tracesToMetrics:
+            datasourceUid: prometheus
+            spanStartTimeShift: "-1h"
+            spanEndTimeShift: "1h"
+            tags:
+              - key: service.name
+                value: service_name
+          serviceMap:
+            datasourceUid: prometheus
+          nodeGraph:
+            enabled: true
+          search:
+            hide: false
+          lokiSearch:
+            datasourceUid: loki
+
+dashboardProviders:
+  dashboardproviders.yaml:
+    apiVersion: 1
+    providers:
+      - name: platform
+        orgId: 1
+        folder: Platform
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards/platform
+
+# Filled by the observability target from platform/addons/observability/dashboard.json
+dashboardsConfigMaps:
+  platform: grafana-dashboards

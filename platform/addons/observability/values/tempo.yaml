@@ -1,0 +1,29 @@
+# grafana/tempo
+#
+# Single binary, local storage. Alloy sends over OTLP HTTP on 4318.
+
+tempo:
+  storage:
+    trace:
+      backend: local
+      local:
+        path: /var/tempo/blocks
+      wal:
+        path: /var/tempo/wal
+
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+
+  reportingEnabled: false
+
+persistence:
+  enabled: false
