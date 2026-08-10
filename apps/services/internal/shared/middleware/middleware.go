@@ -3,6 +3,7 @@ package middleware
 
 import (
 	"log/slog"
+	"math/rand/v2"
 	"net/http"
 	"strconv"
 	"strings"
@@ -52,6 +53,32 @@ func RequestLogger() gin.HandlerFunc {
 			"duration_ms", time.Since(start).Milliseconds(),
 			"client_ip", c.ClientIP(),
 		)
+	}
+}
+
+// FailInjector fails the given fraction of requests with 500, to prove a
+// canary rollback works against a build that starts cleanly and passes
+// /healthz but serves broken responses — a crashing pod never reaches
+// canary analysis because readiness catches it first, so it proves nothing.
+//
+// Register it AFTER OTel(): otelgin reads c.Writer.Status() once c.Next()
+// returns, so the 500 written here by AbortWithStatus is what the metric and
+// span record, the same way Auth() already short-circuits inside the traced
+// chain with AbortWithStatusJSON.
+//
+// rate <= 0 (the default — FAIL_RATE unset) returns a plain passthrough, not
+// a wrapped no-op check, so a service that never sets FAIL_RATE pays no
+// per-request cost, not even the rand.Float64 call.
+func FailInjector(rate float64) gin.HandlerFunc {
+	if rate <= 0 {
+		return func(c *gin.Context) { c.Next() }
+	}
+	return func(c *gin.Context) {
+		if rand.Float64() < rate {
+			c.AbortWithStatus(http.StatusInternalServerError)
+			return
+		}
+		c.Next()
 	}
 }
 

@@ -84,6 +84,10 @@ func main() {
 
 	// Business routes: full observability stack
 	r.Use(middleware.OTel(cfg.ServiceName(serviceShortName)))
+	// FailInjector must come after OTel: otelgin records status from
+	// c.Writer.Status() once c.Next() returns, so a 500 written here still
+	// lands in http_server_request_duration_seconds_count with that code.
+	r.Use(middleware.FailInjector(cfg.FailRate))
 	r.Use(middleware.TraceResponseHeader())
 	r.Use(middleware.BaggageToSpan()) // copy baggage (from upstream service) → span attr
 	r.Use(middleware.RequestLogger())
