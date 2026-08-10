@@ -1,0 +1,61 @@
+# argo/argo-cd
+#
+# Served at /argocd through the same gateway as everything else, so reaching it
+# is not a port-forward someone has to remember to run.
+#
+# Unlike Grafana, the gateway must NOT strip the prefix here: rootpath makes
+# Argo CD serve at /argocd itself. Rewriting to / as well would leave the server
+# looking for /argocd under a request that no longer has it, and every asset
+# 404s while the login page still renders.
+
+configs:
+  params:
+    # The gateway terminates TLS. Left at the default the server also serves
+    # TLS, so the gateway would open a plaintext connection to a TLS listener
+    # and every request fails before it reaches Argo CD.
+    #
+    # "Run server without TLS" — argocd-cmd-params-cm.yaml
+    server.insecure: true
+
+    # basehref rewrites <base href> in index.html, rootpath moves the API and
+    # the UI. Both are needed: basehref alone fixes asset URLs but the server
+    # still routes at /, rootpath alone moves the routes but index.html still
+    # points assets at /.
+    #
+    # "Value for base href in index.html. Used if Argo CD is running behind
+    # reverse proxy under subpath different from /" — argocd-cmd-params-cm.yaml
+    server.basehref: /argocd
+    # "Used if Argo CD is running behind reverse proxy under subpath different
+    # from /" — argocd-cmd-params-cm.yaml
+    server.rootpath: /argocd
+
+  cm:
+    # What the UI puts in generated links and callback URLs. Without it they
+    # come out relative to / and drop the prefix.
+    url: https://localhost/argocd
+
+# Single node kind cluster running a whole shop alongside this. HA would add a
+# redis-ha quorum and three controller replicas for no benefit on a laptop.
+redis-ha:
+  enabled: false
+
+controller:
+  replicas: 1
+
+repoServer:
+  replicas: 1
+
+applicationSet:
+  replicas: 1
+
+server:
+  replicas: 1
+
+# No SSO on a laptop; dex is an idle pod and a second thing to wait on.
+dex:
+  enabled: false
+
+# On by default. Nothing here has a notification service configured, so it is a
+# pod doing nothing.
+notifications:
+  enabled: false

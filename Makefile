@@ -214,7 +214,28 @@ rollouts: namespaces
 		"$$(kubectl -n argo-rollouts get deploy argo-rollouts \
 			-o jsonpath='{.spec.template.spec.containers[0].image}' | sed 's/.*://')"
 
-## up: cluster, gateway, images, observability, rollouts, apps
+ARGOCD_VERSION     := 10.3.2
+# The server image tag, which is what a running cluster reports. As with
+# rollouts, the chart version is not recoverable from the Deployment.
+ARGOCD_APP_VERSION := v3.5.0
+
+## argocd: install the Argo CD control plane, served at /argocd
+argocd: namespaces
+	@helm repo add argo https://argoproj.github.io/argo-helm >/dev/null 2>&1 || true
+	@helm repo update argo >/dev/null
+	@helm upgrade --install argocd argo/argo-cd \
+		-n argocd --create-namespace --version $(ARGOCD_VERSION) \
+		-f platform/addons/argocd/values/argocd.yaml
+	@kubectl -n argocd rollout status deployment/argocd-server --timeout=300s
+	@# Unlike rollouts, this chart keeps its CRDs in templates/ so an upgrade does
+	@# update them. The check is here because the pin and the running server
+	@# still drift when a repo cache is stale and helm resolves an older chart.
+	@./platform/scripts/check-version.sh argocd $(ARGOCD_APP_VERSION) \
+		"$$(kubectl -n argocd get deploy argocd-server \
+			-o jsonpath='{.spec.template.spec.containers[0].image}' | sed 's/.*://')"
+	@kubectl apply -f $(MANIFESTS)/09-argocd-route.yaml
+
+## up: cluster, gateway, images, observability, rollouts, argocd, apps
 up: cluster gateway images
 	@# Observability first only so the first requests are captured. The services
 	@# do not depend on it: the OTel SDK logs an export failure and carries on,
@@ -223,6 +244,9 @@ up: cluster gateway images
 	@# Before apps, not after: once a service is a Rollout, its chart fails to
 	@# render against a cluster where the CRD is not registered yet.
 	@$(MAKE) --no-print-directory rollouts
+	@# Before apps: once apps are handed to Argo CD it has to already be running
+	@# to deploy them, and the ordering should not have to change then.
+	@$(MAKE) --no-print-directory argocd
 	@$(MAKE) --no-print-directory apps
 	@$(MAKE) --no-print-directory verify
 
@@ -283,6 +307,6 @@ down:
 	@kind delete cluster --name $(CLUSTER)
 
 .PHONY: help cluster namespaces gateway-api istio tls gateway secrets app-secrets \
-        sql data images observability rollouts apps up verify down \
+        sql data images observability rollouts argocd apps up verify down \
         test test-routing test-auth test-checkout test-resilience test-tls \
         test-o11y test-journey

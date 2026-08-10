@@ -1,0 +1,35 @@
+# Argo CD at /argocd.
+#
+# The namespace is declared here rather than in 01-namespaces.yaml because the
+# route below has to live in it, and 01 is applied long before Argo CD is
+# installed. `helm --create-namespace` only creates it if missing and does not
+# own it, so whichever of the two runs first wins and neither conflicts.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: argocd
+  labels:
+    app.kubernetes.io/part-of: platform
+---
+# Unlike Grafana, there is no URLRewrite filter. server.rootpath and
+# server.basehref make Argo CD serve at /argocd itself, so stripping the prefix
+# here would leave the server looking for /argocd under a request that no
+# longer carries it — the login page renders and every asset behind it 404s.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: argocd
+  namespace: argocd
+spec:
+  parentRefs:
+    - name: platform
+      namespace: istio-system
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: /argocd }
+      backendRefs:
+        # Port 80 and 443 both target container 8080. With server.insecure the
+        # server speaks plaintext there, so 443 would be the gateway opening a
+        # TLS connection to a listener that is not serving TLS.
+        - name: argocd-server
+          port: 80
