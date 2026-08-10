@@ -1,0 +1,38 @@
+# order-svc
+
+namespace: demo
+
+sharedConfig:
+  name: app-config
+
+sharedSecret:
+  name: app-secrets
+
+services:
+  order-svc:
+    image:
+      repository: order-svc
+      tag: v0.1.0
+      pullPolicy: Never
+    port: 9002
+    replicas: 2
+    workloadKind: Deployment
+    uid: 10001
+    probes:
+      liveness:  { path: /healthz, initialDelaySeconds: 10, periodSeconds: 15 }
+      readiness: { path: /healthz, initialDelaySeconds: 5,  periodSeconds: 5 }
+    resources:
+      requests: { cpu: 50m,  memory: 96Mi }
+      limits:   { cpu: 500m, memory: 384Mi }
+    env:
+      - { name: APP_PORT, value: "9002" }
+      # In-cluster address, not through the gateway: this is east-west traffic
+      # and routing it out to the edge and back would add a hop and hide the
+      # dependency from the mesh.
+      - { name: PAYMENT_SVC_URL, value: http://payment-svc.demo.svc.cluster.local }
+    envFromSecret:
+      - mariadb-dsn
+      - jwt-secret
+    topologySpread: true
+    pdb: { minAvailable: 1 }
+    networkPolicy: false

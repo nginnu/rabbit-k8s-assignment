@@ -1,0 +1,199 @@
+// Package usecase orchestrates the payment flow.
+package usecase
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"strconv"
+
+	"github.com/nginnu/rabbit-k8s-assignment/apps/services/internal/payment/domain"
+	"github.com/nginnu/rabbit-k8s-assignment/apps/services/internal/payment/gateway"
+	"github.com/nginnu/rabbit-k8s-assignment/apps/services/internal/payment/repository"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/baggage"
+	"go.opentelemetry.io/otel/codes"
+)
+
+var tracer = otel.Tracer("payment-svc")
+
+// ProcessPaymentInput is the input for ProcessPayment.
+type ProcessPaymentInput struct {
+	OrderID int
+	Amount  float64
+	UserID  int
+	Chaos   gateway.ChaosHeaders
+}
+
+// ProcessPaymentOutput is the result of a successful payment.
+type ProcessPaymentOutput struct {
+	PaymentID  int                  `json:"payment_id"`
+	Status     domain.PaymentStatus `json:"status"`
+	GatewayRef string               `json:"gateway_ref"`
+}
+
+// PaymentUsecase contains the business logic for payments.
+type PaymentUsecase struct {
+	repo    *repository.PaymentRepo
+	order   *gateway.OrderClient
+	mockPay *gateway.MockPaymentClient
+}
+
+// New creates a PaymentUsecase.
+func New(repo *repository.PaymentRepo, order *gateway.OrderClient, mockPay *gateway.MockPaymentClient) *PaymentUsecase {
+	return &PaymentUsecase{
+		repo:    repo,
+		order:   order,
+		mockPay: mockPay,
+	}
+}
+
+// ProcessPayment runs the full payment flow per PLAN section 9.3.
+func (u *PaymentUsecase) ProcessPayment(ctx context.Context, in ProcessPaymentInput) (*ProcessPaymentOutput, error) {
+	// ใส่ order.id ลง baggage ก่อนสร้าง span
+	// → downstream (order-svc, mock-payment) จะได้ order.id อัตโนมัติผ่าน otelhttp + BaggageToSpan
+	ctx = withOrderBaggage(ctx, in.OrderID)
+
+	ctx, span := tracer.Start(ctx, "process payment")
+	defer span.End()
+
+	span.SetAttributes(
+		attribute.Int("order.id", in.OrderID),
+		attribute.Float64("payment.amount", in.Amount),
+		attribute.Int("user.id", in.UserID),
+	)
+
+	slog.InfoContext(ctx, "payment started",
+		"order_id", in.OrderID,
+		"amount", in.Amount,
+		"user_id", in.UserID,
+	)
+
+	// Step 1: Validate order exists and is pending.
+	_, err := u.order.Validate(ctx, in.OrderID)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		span.RecordError(err)
+		slog.ErrorContext(ctx, "order validation failed",
+			"order_id", in.OrderID,
+			"error", err,
+		)
+		return nil, fmt.Errorf("validate order: %w", err)
+	}
+
+	// Step 2: Create pending payment record.
+	payment, err := u.repo.CreatePending(ctx, in.OrderID, in.Amount)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		span.RecordError(err)
+		slog.ErrorContext(ctx, "create pending payment failed",
+			"order_id", in.OrderID,
+			"error", err,
+		)
+		return nil, fmt.Errorf("create pending: %w", err)
+	}
+
+	slog.InfoContext(ctx, "payment pending created",
+		"payment_id", payment.ID,
+		"order_id", in.OrderID,
+	)
+
+	// Step 3: Call mock-payment gateway to charge.
+	chargeResult, err := u.mockPay.Charge(ctx, in.Amount, in.Chaos)
+	if err != nil {
+		// Gateway returned error (500) -- mark payment as failed.
+		_ = u.repo.UpdateStatus(ctx, payment.ID, domain.StatusFailed, "")
+		span.SetStatus(codes.Error, err.Error())
+		span.RecordError(err)
+		slog.ErrorContext(ctx, "gateway charge failed",
+			"payment_id", payment.ID,
+			"error", err,
+		)
+		return &ProcessPaymentOutput{
+			PaymentID: payment.ID,
+			Status:    domain.StatusFailed,
+		}, fmt.Errorf("charge failed: %w", err)
+	}
+
+	// Step 4: Charge succeeded -- update payment to paid with gateway ref.
+	if err := u.repo.UpdateStatus(ctx, payment.ID, domain.StatusPaid, chargeResult.Ref); err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		span.RecordError(err)
+		slog.ErrorContext(ctx, "update payment status failed",
+			"payment_id", payment.ID,
+			"error", err,
+		)
+		return nil, fmt.Errorf("update status: %w", err)
+	}
+
+	slog.InfoContext(ctx, "payment charged",
+		"payment_id", payment.ID,
+		"gateway_ref", chargeResult.Ref,
+	)
+
+	// Step 5: Mark order as paid in order-svc.
+	if err := u.order.MarkPaid(ctx, in.OrderID); err != nil {
+		// Non-fatal: payment succeeded, order update is best-effort.
+		span.SetStatus(codes.Error, err.Error())
+		span.RecordError(err)
+		slog.ErrorContext(ctx, "mark order paid failed (non-fatal)",
+			"order_id", in.OrderID,
+			"error", err,
+		)
+	}
+
+	slog.InfoContext(ctx, "payment completed",
+		"payment_id", payment.ID,
+		"order_id", in.OrderID,
+		"status", "paid",
+	)
+
+	return &ProcessPaymentOutput{
+		PaymentID:  payment.ID,
+		Status:     domain.StatusPaid,
+		GatewayRef: chargeResult.Ref,
+	}, nil
+}
+
+// withOrderBaggage เพิ่ม order.id ใน baggage ของ ctx เดิม (ไม่ทำลาย baggage อื่น เช่น user.id จาก Auth)
+// baggage จะถูก otelhttp inject เป็น HTTP header → downstream service ได้ค่าโดยอัตโนมัติ
+func withOrderBaggage(ctx context.Context, orderID int) context.Context {
+	existing := baggage.FromContext(ctx)
+	member, err := baggage.NewMember("order.id", strconv.Itoa(orderID))
+	if err != nil {
+		return ctx
+	}
+	bag, err := existing.SetMember(member)
+	if err != nil {
+		return ctx
+	}
+	return baggage.ContextWithBaggage(ctx, bag)
+}
+
+// GetPayment loads a payment for the confirmation step.
+//
+// Ownership is not enforced here and deliberately so: payments carry no
+// user_id, and order-svc's internal API returns only id and status, so there is
+// nothing to check against. Any authenticated user could read another's receipt
+// by guessing an id. Acceptable for a lab, unacceptable in production — closing
+// it needs order-svc to expose the owning user, which is a change to that
+// service's contract rather than something payments can fix alone.
+func (u *PaymentUsecase) GetPayment(ctx context.Context, paymentID, userID int) (*domain.Payment, error) {
+	ctx, span := tracer.Start(ctx, "confirm checkout")
+	defer span.End()
+	span.SetAttributes(
+		attribute.Int("payment.id", paymentID),
+		attribute.Int("user.id", userID),
+	)
+
+	p, err := u.repo.FindByID(ctx, paymentID)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
+	}
+
+	span.SetAttributes(attribute.String("payment.status", string(p.Status)))
+	return p, nil
+}

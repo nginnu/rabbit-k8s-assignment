@@ -1,14 +1,8 @@
 {{/*
 Workload — Deployment or Rollout from the same template.
 
-`workloadKind` selects which. Deployment is the default; setting Rollout
-switches a service to Argo Rollouts for canary or blue-green delivery without
-editing a template, because the only structural difference between the two is
-the apiVersion and the strategy block, both handled below. Leaving that seam
-open now is what makes the change one line later.
-
-Named template — a service chart calls it via
-`include "platform-service.deployment-rollout" .`.
+`workloadKind` selects which. The only structural difference is the apiVersion
+and the strategy block, so switching a service to canary is one line in values.
 */}}
 {{- define "platform-service.deployment-rollout" -}}
 {{- range $name, $svc := .Values.services }}
@@ -25,21 +19,21 @@ spec:
   replicas: {{ $svc.replicas | default 1 }}
   {{- if ne $svc.workloadKind "Rollout" }}
   {{/*
-    Stated rather than left to the API server's defaults. An unmentioned field
-    stays owned by whoever wrote it first, so a Deployment created by kubectl
-    keeps ownership of strategy and blocks Helm from ever adopting the object —
-    the migration fails on a field the chart never had an opinion about.
-
-    The values are the Kubernetes defaults; declaring them changes nothing
-    about how a rollout behaves, only who owns the fields.
-
-    Rollout has its own strategy block and must not receive this one.
+    Stated, not left to the API server. An unmentioned field stays owned by
+    whoever wrote it first, so a Deployment created by kubectl keeps ownership
+    of strategy and Helm can never adopt the object. Rollout has its own
+    strategy block below and must not get this one.
   */}}
   strategy:
     type: RollingUpdate
     rollingUpdate:
-      maxSurge: {{ $svc.maxSurge | default "25%" }}
-      maxUnavailable: {{ $svc.maxUnavailable | default "25%" }}
+      {{/*
+        maxUnavailable 0 rather than the Kubernetes default of 25%: a new pod
+        has to be ready before an old one goes, so a rollout never runs below
+        the declared replica count.
+      */}}
+      maxSurge: {{ $svc.maxSurge | default 1 }}
+      maxUnavailable: {{ $svc.maxUnavailable | default 0 }}
   {{- end }}
   selector:
     matchLabels:
@@ -83,9 +77,11 @@ spec:
             {{- end }}
           {{- with $svc.probes }}
           {{/*
-            hasKey instead of `default` for the delays. Go templates treat 0 as
-            empty, so `default 10` would turn an explicit 0 into a 10 second
-            wait and a service that is ready immediately could not say so.
+            hasKey, not `default`, for the delays: Go templates treat 0 as empty,
+            so `default 10` would rewrite an explicit 0 into a ten second wait.
+
+            timeoutSeconds is stated because the Kubernetes default of 1s fails
+            a probe on a pod that is busy but healthy.
           */}}
           livenessProbe:
             httpGet:
@@ -93,12 +89,16 @@ spec:
               port: http
             initialDelaySeconds: {{ if hasKey .liveness "initialDelaySeconds" }}{{ .liveness.initialDelaySeconds }}{{ else }}10{{ end }}
             periodSeconds: {{ .liveness.periodSeconds | default 15 }}
+            timeoutSeconds: {{ .liveness.timeoutSeconds | default 3 }}
+            failureThreshold: {{ .liveness.failureThreshold | default 3 }}
           readinessProbe:
             httpGet:
               path: {{ .readiness.path | default "/healthz" }}
               port: http
             initialDelaySeconds: {{ if hasKey .readiness "initialDelaySeconds" }}{{ .readiness.initialDelaySeconds }}{{ else }}5{{ end }}
             periodSeconds: {{ .readiness.periodSeconds | default 5 }}
+            timeoutSeconds: {{ .readiness.timeoutSeconds | default 3 }}
+            failureThreshold: {{ .readiness.failureThreshold | default 3 }}
           {{- end }}
           resources:
             {{- toYaml $svc.resources | nindent 12 }}
@@ -107,12 +107,6 @@ spec:
   {{- if eq $svc.workloadKind "Rollout" }}
   strategy:
     {{- toYaml $svc.rollout.strategy | nindent 4 }}
-  {{- else }}
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxUnavailable: 0
-      maxSurge: 1
   {{- end }}
 {{- end }}
 {{- end -}}

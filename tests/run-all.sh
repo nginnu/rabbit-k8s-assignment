@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+#
+# Runs every test file and reports which ones failed.
+#
+#   ./tests/run-all.sh
+#
+# Ordered cheapest first: routing before checkout, and resilience last because
+# it deletes pods and takes minutes.
+
+cd "$(dirname "$0")" || exit 1
+
+SUITES="routing.sh auth.sh checkout.sh tls-proof.sh resilience.sh"
+
+failed=""
+for suite in $SUITES; do
+  printf '\n\033[1m═══ %s ═══\033[0m\n' "$suite"
+  if ./"$suite"; then
+    :
+  else
+    failed="$failed $suite"
+  fi
+done
+
+printf '\n\033[1m═══ summary ═══\033[0m\n'
+if [ -z "$failed" ]; then
+  printf '\033[32mall suites passed\033[0m\n'
+  exit 0
+fi
+printf '\033[31mfailed:%s\033[0m\n' "$failed"
+exit 1

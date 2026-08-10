@@ -1,17 +1,14 @@
 #!/usr/bin/env bash
 #
-# Copy the developer's mkcert CA into the cluster so cert-manager can issue
-# from it.
+# Copy the mkcert CA into the cluster so cert-manager can issue from it.
 #
 #   ./platform/scripts/seed-ca.sh
 #
-# The CA has to come from outside the cluster. A browser only trusts a CA that
-# is already in the machine's trust store, which is what `mkcert -install`
-# does. Nothing running in the cluster can add one, so the CA is created on the
-# machine and copied in; cert-manager issues the certificate from it.
+# The CA has to come from outside: a browser only trusts one already in the
+# machine's trust store, and nothing in the cluster can put it there.
 #
-# The private key is read from `mkcert -CAROOT` at run time and written into a
-# Secret. It never goes into git.
+# The private key is read from `mkcert -CAROOT` at run time. It never goes into
+# git.
 
 set -euo pipefail
 

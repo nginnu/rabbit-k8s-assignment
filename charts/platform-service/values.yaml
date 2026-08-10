@@ -1,32 +1,13 @@
 # platform-service — values schema
 #
-# Every setting a service chart under charts/apps/ can use. Defaults are
-# conservative; set what you need explicitly.
-#
 # A service is one entry under `services.<name>`. The library loops over that
 # map, so adding a service means adding values, not editing a template.
-#
-# One chart and one release per service, so upgrading or rolling back one
-# service does not affect the others.
 
-# -- Namespace every service lands in. Environments are separated by cluster,
-# not by namespace prefix, so this name does not carry an environment in it.
 namespace: demo
 
-# -- Shared ConfigMap wired into a service via envFrom, when it names one. Keys
-# become env vars verbatim. Keep it to values that are truly common; anything
-# that varies per service goes under `services.<name>.env`.
-#
-# The ConfigMap itself is not created here — a service chart consumes it by
-# name, and whichever release owns it renders it. A workload with no shared
-# environment simply omits this block.
 sharedConfig: {}
-
-# -- Shared Secret reference. The Secret is created out-of-band and never
-# committed; services reference it by name and key, never by value.
 sharedSecret: {}
 
-# -- Per-service definitions. This is the heart of the schema.
 services: {}
 # Example — copy this shape for each service:
 #   my-service:
@@ -36,7 +17,7 @@ services: {}
 #       pullPolicy: Never           # local: kind load, no registry to pull from
 #     port: 8080                    # container port; the Service listens on 80
 #     replicas: 2
-#     workloadKind: Deployment      # the library renders the workload from this
+#     workloadKind: Deployment      # Rollout switches this service to canary
 #     uid: 10001                    # numeric — kubelet does not resolve names
 #     readOnlyRootFilesystem: true  # false only where the runtime writes to its
 #                                   # own image at run time
@@ -44,13 +25,13 @@ services: {}
 #                                   # replaced by the default — state it to mean it
 #       liveness:  { path: /healthz, initialDelaySeconds: 10, periodSeconds: 15 }
 #       readiness: { path: /healthz, initialDelaySeconds: 5,  periodSeconds: 5 }
-#     resources:                    # both requests and limits, always
+#     resources:
 #       requests: { cpu: 50m, memory: 96Mi }
 #       limits:   { cpu: 500m, memory: 384Mi }
 #     env:
 #       - { name: APP_PORT, value: "8080" }
-#     envFromSecret:                # pulled from the shared Secret by key
+#     envFromSecret:                # names only, never values
 #       - some-credential
-#     topologySpread: true          # spread across nodes (needs >1 node)
+#     topologySpread: true
 #     pdb: { minAvailable: 1 }
 #     networkPolicy: false

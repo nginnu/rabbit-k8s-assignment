@@ -1,0 +1,143 @@
+# MariaDB — stands in for Cloud SQL for MySQL locally. The app reads
+# MARIADB_DSN and speaks the MySQL wire protocol either way.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mariadb
+  namespace: data
+  labels:
+    app.kubernetes.io/name: mariadb
+spec:
+  # Headless: a StatefulSet needs stable per-pod DNS (mariadb-0.mariadb.data).
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: mariadb
+  ports:
+    - name: mysql
+      port: 3306
+      targetPort: mysql
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mariadb
+  namespace: data
+  labels:
+    app.kubernetes.io/name: mariadb
+spec:
+  serviceName: mariadb
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mariadb
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mariadb
+    spec:
+      securityContext:
+        # The mariadb image runs as uid 999 and needs to own its data
+        # directory; fsGroup makes the mounted volume group-writable for it.
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+      containers:
+        - name: mariadb
+          image: mariadb:11.4
+          ports:
+            - name: mysql
+              containerPort: 3306
+          env:
+            - name: MARIADB_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: mariadb, key: root-password }
+            - name: MARIADB_DATABASE
+              value: rabbitshop
+            - name: MARIADB_USER
+              valueFrom:
+                secretKeyRef: { name: mariadb, key: username }
+            - name: MARIADB_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: mariadb, key: password }
+          # Readiness gates the init Job and every client, so it has to mean
+          # "accepting queries" rather than "process started".
+          readinessProbe:
+            exec:
+              command: ["healthcheck.sh", "--connect", "--innodb_initialized"]
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: ["healthcheck.sh", "--connect"]
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          resources:
+            requests: { cpu: 100m, memory: 512Mi }
+            limits:   { cpu: 1000m, memory: 1Gi }
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/mysql
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        # No storageClassName: takes the cluster default — local-path here,
+        # pd-balanced on GKE.
+        resources:
+          requests:
+            storage: 2Gi
+---
+# Schema and seed. Compose runs init SQL from the entrypoint; Kubernetes has no
+# such hook, so it is an explicit Job.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mariadb-init
+  namespace: data
+  labels:
+    app.kubernetes.io/name: mariadb-init
+spec:
+  # Deletes itself once finished so re-applying the manifests re-runs it
+  # instead of failing on an immutable existing Job.
+  ttlSecondsAfterFinished: 120
+  backoffLimit: 10
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mariadb-init
+    spec:
+      restartPolicy: OnFailure
+      securityContext:
+        runAsUser: 999
+        runAsGroup: 999
+      containers:
+        - name: init
+          image: mariadb:11.4
+          env:
+            - name: MARIADB_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: mariadb, key: root-password }
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -e
+              # The Job can start before the database accepts connections, and
+              # backoffLimit would burn retries on a race that resolves itself.
+              until mariadb -h mariadb -uroot -p"$MARIADB_ROOT_PASSWORD" -e 'SELECT 1' >/dev/null 2>&1; do
+                echo "waiting for mariadb..."
+                sleep 2
+              done
+              echo "applying schema and seed"
+              mariadb -h mariadb -uroot -p"$MARIADB_ROOT_PASSWORD" < /sql/init.sql
+              echo "done"
+          volumeMounts:
+            - name: sql
+              mountPath: /sql
+          resources:
+            requests: { cpu: 20m, memory: 64Mi }
+            limits:   { cpu: 200m, memory: 256Mi }
+      volumes:
+        - name: sql
+          configMap:
+            name: mariadb-init-sql

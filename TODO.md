@@ -10,21 +10,21 @@ Acceptance criteria in [docs/goals.md](docs/goals.md).
 - [x] one workload deployed and reachable through its Service
 - [x] `make up` runs end to end
 
-## 2. Data layer
+## 2. Data layer ✅
 
-- [ ] database as a StatefulSet with a PVC
-- [ ] cache
-- [ ] credentials generated into a Secret, never committed
-- [ ] schema and seed data loaded on first start
-- [ ] verify: data survives a pod restart
+- [x] database as a StatefulSet with a PVC
+- [x] cache
+- [x] credentials generated into a Secret, never committed
+- [x] schema and seed data loaded on first start
+- [x] verify: data survives a pod restart
 
-## 3. Application services
+## 3. Application services ✅
 
-- [ ] backend services — one chart, one release each
-- [ ] frontend
-- [ ] shared config in a ConfigMap
-- [ ] probes and resource limits on every container
-- [ ] verify: a request goes through every service and comes back
+- [x] backend services — one chart, one release each
+- [x] frontend
+- [x] shared config in a ConfigMap
+- [x] probes and resource limits on every container
+- [x] verify: a request goes through every service and comes back
 
 ## 4. Ingress + TLS ✅
 
@@ -48,13 +48,23 @@ Acceptance criteria in [docs/goals.md](docs/goals.md).
 - [ ] verify: a good release shifts traffic step by step
 - [ ] verify: a bad release rolls back automatically
 
-## 7. Isolation
+## 7. GitOps
+
+Argo Rollouts and ArgoCD are separate projects; Rollouts needs no ArgoCD.
+Section 6 does not depend on this one.
+
+- [ ] ArgoCD installed
+- [ ] one Application per service, App of Apps pointing at charts/apps/
+- [ ] `make apps` stays as a bootstrap and escape hatch
+- [ ] verify: a change committed to git reaches the cluster without make
+
+## 8. Isolation
 
 - [ ] default-deny NetworkPolicy
 - [ ] explicit allow rules between services that talk to each other
 - [ ] verify: a blocked pod cannot reach the database
 
-## 8. Deliverables
+## 9. Deliverables
 
 - [ ] README — how to deploy and how to reach it
 - [ ] design notes — the decisions and the trade-offs
@@ -62,5 +72,4 @@ Acceptance criteria in [docs/goals.md](docs/goals.md).
 
 ## Deferred
 
-- GitOps (ArgoCD) — not asked for
 - Deploying to a cloud provider — the brief asks for reproducible, not hosted

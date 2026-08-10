@@ -32,15 +32,10 @@ The full image reference: repository:tag. `svc` carries the image block.
 {{/*
 Hardened securityContext.
 
-Two fields can be set per service. Both default to the strict value, so a
-service has to opt out explicitly:
+Two fields vary per service; both default strict, so opting out is deliberate:
 
-  uid                      the image's own user; kubelet needs the number
-  readOnlyRootFilesystem   false only where the runtime genuinely writes into
-                           its own image at run time — a cache directory, for
-                           instance. Anything that does not, stays read-only.
-
-The remaining three are not negotiable and take no value from the caller.
+  uid                      numeric — kubelet cannot resolve a name
+  readOnlyRootFilesystem   false only where the runtime writes to its own image
 */}}
 {{- define "platform-service.securityContext" -}}
 allowPrivilegeEscalation: false

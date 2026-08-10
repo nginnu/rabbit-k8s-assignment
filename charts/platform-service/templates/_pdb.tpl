@@ -1,10 +1,6 @@
 {{/*
-PodDisruptionBudget — only rendered when a service declares one. Voluntary
-disruptions (drain) respect the budget; it has teeth because the cluster has
-more than one node to reschedule onto.
-
-Named template — a service chart calls it via
-`include "platform-service.pdb" .`.
+PodDisruptionBudget — rendered only when a service declares one. It has teeth
+because the cluster has more than one node to reschedule onto.
 */}}
 {{- define "platform-service.pdb" -}}
 {{- range $name, $svc := .Values.services }}

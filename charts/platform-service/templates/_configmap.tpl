@@ -1,15 +1,7 @@
 {{/*
-Shared ConfigMap — non-secret environment that more than one service reads.
+Shared ConfigMap — non-secret environment more than one service reads.
 
-One object rather than a copy per service: values belonging to the environment
-are not properties of any single workload, and duplicating them means every
-future change has to find all the copies.
-
-Rendered only when .Values.sharedConfig is set, so a release with no shared
-environment produces no empty object.
-
-Named template — a service chart calls it via
-`include "platform-service.configmap" .`.
+Rendered only when .Values.sharedConfig is set.
 */}}
 {{- define "platform-service.configmap" -}}
 {{- with .Values.sharedConfig }}

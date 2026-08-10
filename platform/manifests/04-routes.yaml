@@ -1,10 +1,66 @@
-# Routes.
+# Routing.
 #
-# HTTPRoutes live in the app namespace, next to the service they expose. The
-# Gateway belongs to the platform; each service owns its own route.
+# HTTPRoutes live in the app namespace beside the service they expose: platform
+# owns the Gateway, app teams own their routes.
 #
-# When more routes are added, order matters: the most specific prefix wins and
-# / must be last, or it catches everything.
+# /api is stripped before forwarding, so backends keep the paths they serve and
+# the UI stays on one origin. The most specific prefix wins, so / must be last.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: api
+  namespace: demo
+spec:
+  parentRefs:
+    - name: platform
+      namespace: istio-system
+  rules:
+    # /api/auth/login → auth-svc /auth/login
+    - matches:
+        - path: { type: PathPrefix, value: /api/auth }
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path: { type: ReplacePrefixMatch, replacePrefixMatch: /auth }
+      backendRefs:
+        - name: auth-svc
+          port: 80
+
+    # /api/products → order-svc /products
+    - matches:
+        - path: { type: PathPrefix, value: /api/products }
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path: { type: ReplacePrefixMatch, replacePrefixMatch: /products }
+      backendRefs:
+        - name: order-svc
+          port: 80
+
+    # /api/orders → order-svc /orders
+    - matches:
+        - path: { type: PathPrefix, value: /api/orders }
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path: { type: ReplacePrefixMatch, replacePrefixMatch: /orders }
+      backendRefs:
+        - name: order-svc
+          port: 80
+
+    # /api/payments → payment-svc /payments
+    - matches:
+        - path: { type: PathPrefix, value: /api/payments }
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path: { type: ReplacePrefixMatch, replacePrefixMatch: /payments }
+      backendRefs:
+        - name: payment-svc
+          port: 80
+---
+# dummy has its own route so a canary can be exercised against a service that
+# holds no data and can be told to fail on demand.
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
@@ -16,7 +72,25 @@ spec:
       namespace: istio-system
   rules:
     - matches:
-        - path: { type: PathPrefix, value: / }
+        - path: { type: PathPrefix, value: /dummy }
       backendRefs:
         - name: dummy
+          port: 80
+---
+# Everything else is the UI. A separate route so a frontend canary can shift
+# weights without touching backend routing.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: web-ui
+  namespace: demo
+spec:
+  parentRefs:
+    - name: platform
+      namespace: istio-system
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: / }
+      backendRefs:
+        - name: web-ui
           port: 80

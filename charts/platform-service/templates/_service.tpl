@@ -1,11 +1,5 @@
 {{/*
-Service — one per service, exposing the workload on port 80 and forwarding to
-the container's http port. Kept minimal: every service on this platform speaks
-HTTP and is consumed over the mesh, so the service abstraction never needs to
-vary.
-
-Named template — a service chart calls it via
-`include "platform-service.service" .`.
+Service — port 80 forwarding to the container's http port.
 */}}
 {{- define "platform-service.service" -}}
 {{- range $name, $svc := .Values.services }}

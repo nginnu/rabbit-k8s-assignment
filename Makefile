@@ -1,7 +1,7 @@
 # Local platform — one command per thing you actually want to do.
 #
-# kind and helm live in /usr/local/bin, which is not always on a login shell's
-# PATH; prepend it so `make` works regardless of how the shell was started.
+# kind and helm live in /usr/local/bin, which a login shell does not always have
+# on PATH.
 export PATH := /usr/local/bin:$(PATH)
 
 CLUSTER   ?= rabbit-k8s-test
@@ -35,9 +35,8 @@ gateway-api: cluster
 		crd/gateways.gateway.networking.k8s.io \
 		crd/httproutes.gateway.networking.k8s.io \
 		crd/gatewayclasses.gateway.networking.k8s.io
-	@# apply does not replace CRDs from an older bundle. The fields Istio needs
-	@# would be dropped at admission time while the YAML still looks right, so
-	@# check the version instead of assuming.
+	@# apply does not replace CRDs from an older bundle, and the fields Istio
+	@# needs are then dropped at admission while the YAML still looks right.
 	@./platform/scripts/check-version.sh gateway-api $(GATEWAY_API_VERSION) \
 		"$$(kubectl get crd gateways.gateway.networking.k8s.io \
 			-o jsonpath='{.metadata.annotations.gateway\.networking\.k8s\.io/bundle-version}')"
@@ -52,9 +51,8 @@ istio: gateway-api
 		--version $(ISTIO_VERSION) --wait
 	@helm upgrade --install istiod istio/istiod -n istio-system \
 		--version $(ISTIO_VERSION) -f platform/addons/istio/local/values.yaml --wait --timeout 5m
-	@# Older Istio ignores infrastructure.parametersRef on the Gateway without
-	@# logging anything. The nodeSelector and hostPort go missing and :80 is
-	@# unreachable several targets later, so check the version here.
+	@# Older Istio ignores parametersRef on the Gateway and logs nothing: the
+	@# nodeSelector and hostPort go missing and :80 fails several targets later.
 	@./platform/scripts/check-version.sh istio $(ISTIO_VERSION) \
 		"$$(kubectl -n istio-system get deploy istiod \
 			-o jsonpath='{.spec.template.spec.containers[0].image}' | sed 's/.*://')"
@@ -68,9 +66,8 @@ tls: istio
 	@helm upgrade --install cert-manager jetstack/cert-manager -n cert-manager \
 		--create-namespace --version $(CERT_MANAGER_VERSION) \
 		--set crds.enabled=true --wait --timeout 5m
-	@# The CA comes from mkcert on this machine, because the browser only trusts
-	@# a CA that is already in the system keychain. Nothing inside the cluster
-	@# can add one. cert-manager then issues the certificate from it.
+	@# The CA has to come from mkcert on this machine: a browser only trusts a CA
+	@# already in the system keychain, and nothing in the cluster can add one.
 	@./platform/scripts/seed-ca.sh
 	@kubectl apply -f $(MANIFESTS)/02-certificates.yaml
 	@kubectl -n istio-system wait --for=condition=Ready --timeout=120s \
@@ -82,24 +79,78 @@ gateway: namespaces tls
 	@kubectl -n istio-system wait --for=condition=Programmed --timeout=180s gateway/platform
 	@kubectl apply -f $(MANIFESTS)/04-routes.yaml
 
+DATA_NS := data
+
+## secrets: generate credentials into the cluster, never into git
+secrets: namespaces
+	@# Created once: regenerating would change the password out from under a
+	@# database that still has the old one.
+	@kubectl -n $(DATA_NS) get secret mariadb >/dev/null 2>&1 \
+		&& echo "secret mariadb already exists — delete it to rotate" \
+		|| kubectl -n $(DATA_NS) create secret generic mariadb \
+			--from-literal=username=rabbitshop \
+			--from-literal=password=$$(openssl rand -hex 16) \
+			--from-literal=root-password=$$(openssl rand -hex 16)
+
+## app-secrets: build the app credentials from the database ones
+app-secrets: secrets
+	@DBPASS=$$(kubectl -n $(DATA_NS) get secret mariadb -o jsonpath='{.data.password}' | base64 -d); \
+	DBUSER=$$(kubectl -n $(DATA_NS) get secret mariadb -o jsonpath='{.data.username}' | base64 -d); \
+	kubectl -n demo get secret app-secrets >/dev/null 2>&1 \
+		|| kubectl -n demo create secret generic app-secrets \
+			--from-literal=mariadb-dsn="$$DBUSER:$$DBPASS@tcp(mariadb.$(DATA_NS).svc.cluster.local:3306)/rabbitshop?parseTime=true" \
+			--from-literal=jwt-secret=$$(openssl rand -hex 32)
+
+## sql: load the schema and seed into a ConfigMap
+sql: namespaces
+	@kubectl -n $(DATA_NS) create configmap mariadb-init-sql \
+		--from-file=init.sql=storage/mariadb-init.sql \
+		--dry-run=client -o yaml | kubectl apply -f -
+
+## data: bring up MariaDB and Redis
+data: secrets sql
+	@kubectl apply -f $(MANIFESTS)/05-mariadb.yaml -f $(MANIFESTS)/06-redis.yaml
+	@kubectl -n $(DATA_NS) rollout status statefulset/mariadb --timeout=180s
+	@kubectl -n $(DATA_NS) rollout status deployment/redis --timeout=120s
+	@# The schema Job runs separately from the database, so waiting on the
+	@# StatefulSet alone would let a service start against empty tables.
+	@kubectl -n $(DATA_NS) wait --for=condition=complete job/mariadb-init --timeout=180s
+
+# One image per service out of apps/services, selected by the SVC build arg.
+GO_SVCS := auth-svc order-svc payment-svc mock-payment
+
 ## images: build every image and load it into the cluster
 images:
+	@# pullPolicy is Never, so a chart pinned to an unbuilt tag does not fail at
+	@# deploy time — the pod just sits in ErrImageNeverPull.
+	@./platform/scripts/check-image-tags.sh $(VERSION)
 	@docker build --build-arg VERSION=$(VERSION) -t dummy:$(VERSION) apps/dummy
-	@# kind nodes have their own image store and no registry to pull from, so an
-	@# image built on the host is invisible until it is loaded in.
-	@kind load docker-image --name $(CLUSTER) dummy:$(VERSION)
+	@for s in $(GO_SVCS); do \
+		docker build --build-arg SVC=$$s --build-arg VERSION=$(VERSION) \
+			-t $$s:$(VERSION) apps/services; \
+	done
+	@docker build -t web-ui:$(VERSION) apps/web-ui
+	@# kind nodes have their own image store and no registry, so an image built on
+	@# the host is invisible until loaded in.
+	@kind load docker-image --name $(CLUSTER) \
+		dummy:$(VERSION) web-ui:$(VERSION) \
+		$(foreach s,$(GO_SVCS),$(s):$(VERSION))
 
-# One chart per service, one release per service: a service is upgraded or
-# rolled back without touching its siblings.
-APP_CHARTS := dummy
+# One release per service, so one can be rolled back without its siblings.
+# platform-config first: a pod that mounts a ConfigMap which does not exist yet
+# stays Pending rather than failing loudly.
+APP_CHARTS := platform-config auth-svc order-svc payment-svc mock-payment web-ui dummy
+
+# platform-config renders only a ConfigMap, so there is nothing to wait on.
+APP_DEPLOYS := auth-svc order-svc payment-svc mock-payment web-ui dummy
 
 ## apps: deploy the application services from their charts
-apps: namespaces
+apps: data app-secrets
 	@for c in $(APP_CHARTS); do \
 		helm dependency update charts/apps/$$c >/dev/null; \
 		helm upgrade --install $$c charts/apps/$$c -n demo; \
 	done
-	@for d in $(APP_CHARTS); do \
+	@for d in $(APP_DEPLOYS); do \
 		kubectl -n demo rollout status deployment/$$d --timeout=180s; \
 	done
 
@@ -121,6 +172,32 @@ verify:
 	@# before showing a padlock.
 	@curl -sS -o /dev/null -w '  http://localhost/   -> HTTP %{http_code}\n' --max-time 10 http://localhost/
 	@curl -sS -o /dev/null -w '  https://localhost/  -> HTTP %{http_code}  (%{ssl_verify_result} = verified)\n' --max-time 10 https://localhost/
+	@echo "── through every service ─────────────────────────"
+	@# 401 without a token is the correct answer, and it proves the request
+	@# reached auth-svc rather than stopping at the gateway.
+	@curl -sS -o /dev/null -w '  /api/products       -> HTTP %{http_code}  (401 = auth is enforced)\n' --max-time 10 https://localhost/api/products
+	@curl -sS -o /dev/null -w '  /dummy              -> HTTP %{http_code}\n' --max-time 10 https://localhost/dummy
+	@echo "   run 'make test' to buy something end to end"
+
+## test: run every test suite
+test:
+	@./tests/run-all.sh
+
+## test-routing: each path reaches the service that owns it
+test-routing:
+	@./tests/routing.sh
+
+## test-auth: credentials are checked and the token opens the api
+test-auth:
+	@./tests/auth.sh
+
+## test-checkout: a customer buys a shirt, end to end
+test-checkout:
+	@./tests/checkout.sh
+
+## test-resilience: the data and the service survive losing a pod
+test-resilience:
+	@./tests/resilience.sh
 
 ## test-tls: capture the traffic and prove https encrypts it
 test-tls:
@@ -130,4 +207,6 @@ test-tls:
 down:
 	@kind delete cluster --name $(CLUSTER)
 
-.PHONY: help cluster namespaces gateway-api istio tls gateway images apps up verify test-tls down
+.PHONY: help cluster namespaces gateway-api istio tls gateway secrets app-secrets \
+        sql data images apps up verify down \
+        test test-routing test-auth test-checkout test-resilience test-tls

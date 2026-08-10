@@ -1,0 +1,43 @@
+# mock-payment
+#
+# Stands in for an external payment gateway. It has its own release rather than
+# living beside the production services because its lifecycle is different: it
+# is torn down and replaced, never rolled out or canaried.
+
+namespace: demo
+
+sharedConfig:
+  name: app-config
+
+sharedSecret:
+  name: app-secrets
+
+services:
+  mock-payment:
+    image:
+      repository: mock-payment
+      tag: v0.1.0
+      pullPolicy: Never
+    port: 7000
+    # One replica is honest: a real payment gateway is not something this
+    # platform runs or scales. Same reason there is no PDB and no topology
+    # spread — there is nothing to spread and no disruption budget to protect.
+    replicas: 1
+    workloadKind: Deployment
+    uid: 10001
+    probes:
+      liveness:  { path: /healthz, initialDelaySeconds: 10, periodSeconds: 15 }
+      readiness: { path: /healthz, initialDelaySeconds: 5,  periodSeconds: 5 }
+    resources:
+      requests: { cpu: 20m,  memory: 64Mi }
+      limits:   { cpu: 200m, memory: 256Mi }
+    env:
+      - { name: APP_PORT, value: "7000" }
+    # It calls config.LoadBase like the real services, so it demands the full
+    # credential set even though a gateway stand-in has no database. Supplying
+    # them beats editing source for a component built to be replaced.
+    envFromSecret:
+      - mariadb-dsn
+      - jwt-secret
+    topologySpread: false
+    networkPolicy: false

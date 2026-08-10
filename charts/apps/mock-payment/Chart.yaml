@@ -1,0 +1,16 @@
+apiVersion: v2
+name: mock-payment
+description: |
+  Stands in for an external payment gateway. Not a production service.
+
+  One chart, one release, one ArgoCD Application. The templates come from the
+  platform-service library chart; this chart contributes values only, so a
+  service can be rolled back or canaried without touching its siblings.
+type: application
+version: 0.1.0
+appVersion: "0.4.0"
+
+dependencies:
+  - name: platform-service
+    version: 0.1.0
+    repository: "file://../../platform-service"

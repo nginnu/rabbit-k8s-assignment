@@ -1,15 +1,5 @@
-# TLS for the gateway.
-#
-# Two objects: the Issuer says who signs, the Certificate says what to sign.
-# Only the Issuer changes between environments.
-#
-#   here        ca issuer -> the mkcert root, already trusted by this machine
-#               because `mkcert -install` added it to the system keychain
-#   real domain acme issuer -> Let's Encrypt, trusted by every browser
-#
-# cert-manager, the Certificate, the Secret and the Gateway listener stay the
-# same either way. That is why cert-manager is used instead of creating a
-# certificate by hand.
+# TLS for the gateway. The Issuer says who signs, the Certificate says what to
+# sign; only the Issuer changes on a real domain (ca -> acme).
 ---
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
@@ -17,33 +7,29 @@ metadata:
   name: mkcert-ca
 spec:
   ca:
-    # Written by `make tls` from `mkcert -CAROOT`. The private key stays on the
-    # developer's machine and in this Secret; it is never committed.
+    # Written by `make tls` from `mkcert -CAROOT`. The private key stays on this
+    # machine and in the Secret; it is never committed.
     secretName: mkcert-ca
 ---
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
   name: platform-tls
-  # Lives beside the Gateway: Istio reads the certificate from a Secret in its
-  # own namespace, so the Certificate has to be issued into istio-system.
+  # Istio reads the certificate from a Secret in its own namespace, so it has to
+  # be issued into istio-system.
   namespace: istio-system
 spec:
   secretName: platform-tls
-  # localhost is what the browser asks for. On a real domain this becomes the
-  # real hostname and nothing else in this file moves.
   dnsNames:
     - localhost
-  # 127.0.0.1 as well, so a request that bypasses name resolution still
-  # validates rather than failing with a confusing SAN mismatch.
+  # So a request that bypasses name resolution validates too, rather than
+  # failing on a SAN mismatch.
   ipAddresses:
     - 127.0.0.1
   issuerRef:
     name: mkcert-ca
     kind: ClusterIssuer
     group: cert-manager.io
-  # Short-lived and auto-renewed, matching how Let's Encrypt behaves, so the
-  # renewal path is exercised locally instead of first running in production.
   duration: 2160h    # 90d
   renewBefore: 360h  # 15d
   privateKey:

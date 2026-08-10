@@ -1,12 +1,6 @@
 {{/*
-NetworkPolicy — off by default, declared here so the schema is complete and a
-service can opt in without a template change later.
-
-When `networkPolicy: true` this renders a default-deny ingress policy. Allow
-rules get added on top once there is more than one service to isolate.
-
-Named template — a service chart calls it via
-`include "platform-service.networkpolicy" .`.
+NetworkPolicy — off by default. `networkPolicy: true` renders a default-deny
+ingress policy; allow rules are layered on top.
 */}}
 {{- define "platform-service.networkpolicy" -}}
 {{- range $name, $svc := .Values.services }}
