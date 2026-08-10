@@ -1,5 +1,5 @@
-// Package db helper เปิด connection ไปยัง MariaDB + Redis
-// พร้อม OTel instrumentation ให้ทุก query สร้าง span อัตโนมัติ
+// Package db opens the MariaDB and Redis connections, both instrumented so
+// every query produces a span.
 package db
 
 import (
@@ -17,7 +17,7 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-// OpenMariaDB เชื่อมกับ MariaDB ด้วย gorm + otelgorm plugin
+// OpenMariaDB connects with gorm and the otelgorm plugin.
 func OpenMariaDB(cfg config.Base) (*gorm.DB, error) {
 	db, err := gorm.Open(mysql.Open(cfg.MariaDBDSN), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Warn),
@@ -38,16 +38,16 @@ func OpenMariaDB(cfg config.Base) (*gorm.DB, error) {
 	return db, nil
 }
 
-// OpenRedis เชื่อมกับ Redis + OTel instrumentation
+// OpenRedis connects to Redis with OTel instrumentation.
 //
-// Redis เป็น non-critical dependency: auth เก็บ session (write-only ไม่เคยอ่าน,
-// JWT verify ด้วย signature ล้วน) และ order ใช้เป็น cache-aside ที่ fall through
-// ไป MariaDB ได้เอง. เพราะงั้น "ping ไม่ผ่าน" **ไม่ใช่เหตุผลที่จะไม่ start**.
+// Redis is not a critical dependency here: auth writes sessions but never reads
+// them back (JWTs verify by signature alone), and order uses it as a cache-aside
+// that falls through to MariaDB. A failed ping is therefore not a reason to
+// refuse to start.
 //
-// คืน client ที่ใช้งานได้เสมอ — go-redis reconnect ให้เองเมื่อ Redis กลับมา.
-// error ที่คืนมาเป็น "เตือน" ไม่ใช่ "ตาย": caller ควร log แล้วเดินต่อ.
-// ถ้าวันหนึ่งมี token revocation / logout (อ่าน session บน hot path)
-// Redis จะกลายเป็น critical จริง แล้วต้องกลับมาทบทวนตรงนี้.
+// The returned client is always usable — go-redis reconnects on its own. The
+// error is a warning, not a fatal: log it and carry on. If token revocation or
+// logout is added, sessions land on the hot path and this has to be revisited.
 func OpenRedis(cfg config.Base) (*redis.Client, error) {
 	client := redis.NewClient(&redis.Options{Addr: cfg.RedisAddr})
 	if err := redisotel.InstrumentTracing(client); err != nil {
@@ -59,9 +59,8 @@ func OpenRedis(cfg config.Base) (*redis.Client, error) {
 	return client, nil
 }
 
-// PingRedis ตรวจว่า Redis ตอบไหม — แยกออกจาก OpenRedis เพื่อให้ caller
-// เลือกได้ว่าจะ "เตือนแล้วไปต่อ" (non-critical) หรือ "ตาย" (critical).
-// ทุก service วันนี้เลือกอย่างแรก.
+// PingRedis is separate from OpenRedis so the caller decides whether a dead
+// Redis is a warning or fatal. Every service today treats it as a warning.
 func PingRedis(client *redis.Client) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

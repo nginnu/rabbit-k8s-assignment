@@ -37,11 +37,12 @@ func New(repo *repository.OrderRepository, rdb *redis.Client) *OrderUsecase {
 // ListProducts returns all available products with cache-aside pattern.
 //
 // Spans:
-//   usecase.list_products
-//     ├─ cache.product.get  → HIT → return
-//     │                     → MISS → continue
-//     ├─ repo.product.list  (otelgorm SELECT)
-//     └─ cache.product.set  (TTL 60s)
+//
+//	usecase.list_products
+//	  ├─ cache.product.get  → HIT → return
+//	  │                     → MISS → continue
+//	  ├─ repo.product.list  (otelgorm SELECT)
+//	  └─ cache.product.set  (TTL 60s)
 func (u *OrderUsecase) ListProducts(ctx context.Context) ([]domain.Product, error) {
 	ctx, span := tracer.Start(ctx, "list products")
 	defer span.End()
@@ -72,7 +73,7 @@ func (u *OrderUsecase) ListProducts(ctx context.Context) ([]domain.Product, erro
 		return nil, err
 	}
 
-	// 3. Write back to cache (best effort — ไม่ fail ถ้า Redis SET พัง)
+	// 3. Write back to cache, best effort — a failed SET does not fail the request.
 	if data, marshalErr := json.Marshal(products); marshalErr == nil {
 		if setErr := u.redis.Set(ctx, productListCacheKey, data, productListCacheTTL).Err(); setErr != nil {
 			span.AddEvent("cache.set_failed",

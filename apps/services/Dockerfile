@@ -1,13 +1,6 @@
-# Unified Dockerfile — one image per service, selected by the SVC build arg.
-# Build ใดใน services/cmd/* ก็ได้ด้วย ARG SVC
+# One image per service, selected by the SVC build arg.
 #
-#   docker build --build-arg SVC=auth-svc -t auth-svc services/
-#
-# ใน docker-compose.yml:
-#   build:
-#     context: ./services
-#     args:
-#       SVC: auth-svc
+#   docker build --build-arg SVC=auth-svc -t auth-svc apps/services
 
 # ─── Stage 1: build ─────────────────────────────────────────────
 # go.mod pins go >= 1.25 (auto-bumped by linter) — image must match
@@ -40,8 +33,8 @@ COPY --from=builder /out/app /usr/local/bin/app
 USER app
 WORKDIR /home/app
 
-# HEALTHCHECK — ใช้ GET (ไม่ใช่ HEAD) เพราะ gin register เฉพาะ GET /healthz
-# `wget --spider` ใช้ HEAD ตอนแรก → 404 → ต้องใช้ -O /dev/null บังคับ GET
+# GET, not HEAD: gin only registers GET /healthz, and `wget --spider` sends HEAD
+# and gets a 404. -O /dev/null forces a GET.
 HEALTHCHECK --interval=10s --timeout=3s --start-period=15s --retries=5 \
     CMD wget -q -O /dev/null http://localhost:${APP_PORT:-9000}/healthz || exit 1
 

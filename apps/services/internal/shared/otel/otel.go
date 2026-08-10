@@ -1,5 +1,5 @@
-// Package otel ตั้งค่า OpenTelemetry SDK (trace + metric + log) ยิงไป OTLP/gRPC
-// ใช้ร่วมทุก service — call Init() ใน main แล้ว defer cleanup
+// Package otel sets up the OpenTelemetry SDK — traces, metrics and logs over
+// OTLP/gRPC. Call Init() from main and defer the returned shutdown.
 package otel
 
 import (
@@ -22,12 +22,14 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 )
 
-// Shutdown ถูก return จาก Init — เรียก defer ไว้ตอน main exit
+// Shutdown is returned by Init; defer it in main.
 type Shutdown func(context.Context) error
 
-// Init ติดตั้ง tracer / meter / logger provider กับ global otel
-// service.name จะเป็น <prefix>-<env>-<svcShortName>
-// ⚠ ไม่ส่ง deployment.environment (ให้ Alloy ดึงจาก service_name)
+// Init registers the tracer, meter and logger providers globally. service.name
+// is <prefix>-<env>-<svcShortName>.
+//
+// deployment.environment is deliberately not sent — Alloy derives it from
+// service.name, so setting it here would produce two sources for one label.
 func Init(ctx context.Context, cfg config.Base, svcShortName string) (Shutdown, error) {
 	serviceName := cfg.ServiceName(svcShortName)
 
@@ -97,10 +99,10 @@ func Init(ctx context.Context, cfg config.Base, svcShortName string) (Shutdown, 
 		propagation.Baggage{},
 	))
 
-	// Store log provider globally สำหรับ logger package ใช้
+	// Stored globally for the logger package.
 	globalLoggerProvider = lp
 
-	// Shutdown สั่งทุก provider flush + close
+	// Shutdown flushes and closes every provider.
 	return func(ctx context.Context) error {
 		shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
@@ -118,10 +120,10 @@ func Init(ctx context.Context, cfg config.Base, svcShortName string) (Shutdown, 
 	}, nil
 }
 
-// globalLoggerProvider ใช้โดย shared/logger
+// globalLoggerProvider is read by shared/logger.
 var globalLoggerProvider *sdklog.LoggerProvider
 
-// LoggerProvider expose ให้ logger package
+// LoggerProvider exposes the provider to the logger package.
 func LoggerProvider() *sdklog.LoggerProvider {
 	return globalLoggerProvider
 }

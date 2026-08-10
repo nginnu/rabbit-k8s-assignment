@@ -52,8 +52,8 @@ func New(repo *repository.PaymentRepo, order *gateway.OrderClient, mockPay *gate
 
 // ProcessPayment runs the full payment flow per PLAN section 9.3.
 func (u *PaymentUsecase) ProcessPayment(ctx context.Context, in ProcessPaymentInput) (*ProcessPaymentOutput, error) {
-	// ใส่ order.id ลง baggage ก่อนสร้าง span
-	// → downstream (order-svc, mock-payment) จะได้ order.id อัตโนมัติผ่าน otelhttp + BaggageToSpan
+	// order.id goes into baggage before the span is created, so order-svc and
+	// mock-payment pick it up through otelhttp without being told.
 	ctx = withOrderBaggage(ctx, in.OrderID)
 
 	ctx, span := tracer.Start(ctx, "process payment")
@@ -157,8 +157,8 @@ func (u *PaymentUsecase) ProcessPayment(ctx context.Context, in ProcessPaymentIn
 	}, nil
 }
 
-// withOrderBaggage เพิ่ม order.id ใน baggage ของ ctx เดิม (ไม่ทำลาย baggage อื่น เช่น user.id จาก Auth)
-// baggage จะถูก otelhttp inject เป็น HTTP header → downstream service ได้ค่าโดยอัตโนมัติ
+// withOrderBaggage adds order.id to the existing baggage without dropping what
+// is already there, such as user.id from Auth. otelhttp injects it as a header.
 func withOrderBaggage(ctx context.Context, orderID int) context.Context {
 	existing := baggage.FromContext(ctx)
 	member, err := baggage.NewMember("order.id", strconv.Itoa(orderID))

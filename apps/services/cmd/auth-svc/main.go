@@ -59,12 +59,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Redis — non-critical. Session เขียนลง Redis แต่ไม่เคยถูกอ่านกลับ
-	// (JWT verify ด้วย signature + exp ล้วน, ไม่มี Get/Exists/Del ที่ไหนเลย)
-	// → Redis หาย = login ยังทำงานได้ครบ. ห้าม os.Exit ตรงนี้.
+	// Redis is not critical here: sessions are written but never read back, and
+	// JWTs verify by signature and expiry alone. Losing Redis leaves login fully
+	// working, so this must not exit.
 	redisClient, err := db.OpenRedis(cfg)
 	if err != nil {
-		// instrumentation ผิดพลาด = bug ในโค้ดเรา ไม่ใช่ Redis ล่ม
+		// A failure here is a bug in our instrumentation, not a dead Redis.
 		log.Error("redis client init failed", "err", err)
 		os.Exit(1)
 	}
@@ -92,7 +92,7 @@ func main() {
 	r.Use(middleware.CORS())
 
 	// Health endpoint — registered BEFORE OTel so healthcheck probes
-	// ไม่สร้าง trace (noise: ทุก 10s × 4 services = ~100 traces/min)
+	// Not traced: every 10s across four services is ~100 traces a minute of noise.
 	r.GET("/healthz", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})

@@ -1,7 +1,5 @@
-// Package logger ตั้ง slog handler ที่:
-//  1. ยิงผ่าน OTel log bridge ไป OTLP
-//  2. inject trace_id / span_id จาก context อัตโนมัติ
-//  3. print JSON ไป stdout ด้วย (developer ดู local ได้)
+// Package logger builds a slog handler that ships logs over OTLP, injects
+// trace_id and span_id from the context, and still prints JSON to stdout.
 package logger
 
 import (
@@ -16,8 +14,8 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// baggageFieldMap: key ใน baggage → field name ใน log
-// ลิสต์ไว้ที่นี่เพื่อจำกัด keys ที่จะ inject (ไม่ใช่ทุก baggage entry)
+// baggageFieldMap maps a baggage key to its log field. Listing them here keeps
+// arbitrary baggage entries out of the logs.
 var baggageFieldMap = map[string]string{
 	"user.id":    "user_id",
 	"session.id": "session_id",
@@ -25,15 +23,15 @@ var baggageFieldMap = map[string]string{
 	"tenant.id":  "tenant_id",
 }
 
-// Init ติดตั้ง default slog logger สำหรับ service
-// serviceShortName ใช้เป็น logger name (เช่น "auth-svc")
+// Init installs the default slog logger. serviceShortName becomes the logger
+// name, for example "auth-svc".
 func Init(serviceShortName string) *slog.Logger {
-	// Stdout JSON handler — สำหรับ dev อ่าน + ถ้า alloy scrape container log ก็ได้
+	// Stdout JSON, readable locally and scrapeable from the container log.
 	stdoutHandler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	})
 
-	// OTel log bridge → ยิงไป OTLP
+	// OTel log bridge, shipping over OTLP.
 	otelHandler := otelslog.NewHandler(serviceShortName,
 		otelslog.WithLoggerProvider(sharedotel.LoggerProvider()),
 	)
@@ -61,7 +59,7 @@ func Init(serviceShortName string) *slog.Logger {
 	return logger
 }
 
-// fanoutHandler ส่ง record ไปทุก handler
+// fanoutHandler sends each record to every handler.
 type fanoutHandler struct {
 	handlers []slog.Handler
 }
@@ -104,7 +102,7 @@ func (f *fanoutHandler) WithGroup(name string) slog.Handler {
 	return &fanoutHandler{handlers: next}
 }
 
-// traceContextHandler เพิ่ม trace_id / span_id ลงทุก record ที่ผ่าน stdout
+// traceContextHandler adds trace_id and span_id to every stdout record.
 type traceContextHandler struct {
 	inner slog.Handler
 	// Set for handlers that do not resolve the span context themselves.
@@ -125,7 +123,7 @@ func (t *traceContextHandler) Handle(ctx context.Context, r slog.Record) error {
 		)
 	}
 
-	// Inject business IDs จาก baggage (user_id, session_id, order_id, tenant_id)
+	// Business ids from baggage: user_id, session_id, order_id, tenant_id.
 	if bag := baggage.FromContext(ctx); bag.Len() > 0 {
 		for _, m := range bag.Members() {
 			if fieldName, ok := baggageFieldMap[m.Key()]; ok {

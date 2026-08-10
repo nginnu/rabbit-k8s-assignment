@@ -1,5 +1,5 @@
-// Package config รวม env vars ที่ทุก service ใช้ร่วม
-// อ่านครั้งเดียวตอน service start — ถ้าขาด fail fast
+// Package config holds the env vars every service shares. Read once at start;
+// a missing one fails immediately rather than at first use.
 package config
 
 import (
@@ -23,12 +23,13 @@ type Base struct {
 	JWTExpireHours int
 }
 
-// ServiceName คำนวณ service.name ตาม pattern: <prefix>-<env>-<name>
+// ServiceName builds service.name as <prefix>-<env>-<name>. The observability
+// pipeline parses this shape, so changing it breaks the dashboards.
 func (b Base) ServiceName(shortName string) string {
 	return fmt.Sprintf("%s-%s-%s", b.SvcPrefix, b.DeploymentEnv, shortName)
 }
 
-// LoadBase อ่าน env vars ที่ share กัน ถ้าขาด panic
+// LoadBase reads the shared env vars and panics on a missing one.
 func LoadBase() Base {
 	return Base{
 		DeploymentEnv: mustGet("DEPLOYMENT_ENV"),

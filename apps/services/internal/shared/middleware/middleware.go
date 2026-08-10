@@ -1,8 +1,4 @@
-// Package middleware รวม gin middleware ที่ทุก service ใช้ร่วม
-//   - OTel:    otelgin auto trace + metric
-//   - Request: log request summary พร้อม trace_id
-//   - Auth:    JWT verify (optional — ใช้เฉพาะ endpoint ที่ต้องการ)
-//   - CORS:    allow all (lab only)
+// Package middleware holds the gin middleware every service shares.
 package middleware
 
 import (
@@ -22,28 +18,18 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// OTel builds gin middleware สำหรับ tracing (otelgin wrapper).
-// ใช้คู่กับ TraceResponseHeader() เพื่อ propagate trace_id กลับไปยัง client
-// ลำดับที่ต้องใช้:
-//
-//	r.Use(middleware.OTel(serviceName))
-//	r.Use(middleware.TraceResponseHeader())   // ← หลัง OTel
-//	r.Use(middleware.RequestLogger())
+// OTel wraps otelgin. Register it before TraceResponseHeader, which reads the
+// span it puts on the request context.
 func OTel(serviceName string) gin.HandlerFunc {
 	return otelgin.Middleware(serviceName)
 }
 
-// TraceResponseHeader ใส่ header `traceresponse: 00-<trace_id>-<span_id>-01`
-// ลงใน response เพื่อให้ client (Playwright / manual test / browser) copy ไปใช้
-// query ใน Grafana ได้.
+// TraceResponseHeader returns the trace id to the caller as
+// `traceresponse: 00-<trace_id>-<span_id>-01`, so a request can be looked up in
+// Grafana afterwards.
 //
-// หมายเหตุสำคัญ — middleware นี้ต้องรัน HERE (ก่อน c.Next()) ไม่ใช่หลัง เพราะ
-// response header ต้องตั้งก่อน handler เขียน body (ไม่งั้น flush แล้ว header ไม่ติด)
-//
-// ลำดับที่ทำให้ทำงานได้:
-//  1. OTel() → otelgin ตั้ง span ใน c.Request.Context() แล้ว call c.Next()
-//  2. TraceResponseHeader() ทำงาน: อ่าน span จาก ctx → set header → c.Next()
-//  3. Handler ทำงาน → c.JSON() เขียน response (header ถูก flush พร้อม body)
+// The header is set before c.Next(), not after: once the handler writes the body
+// the headers are already flushed and a later Set is silently lost.
 func TraceResponseHeader() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if sc := trace.SpanContextFromContext(c.Request.Context()); sc.IsValid() {
@@ -54,7 +40,7 @@ func TraceResponseHeader() gin.HandlerFunc {
 	}
 }
 
-// RequestLogger logs request summary หลัง handler ทำงานเสร็จ
+// RequestLogger logs a one-line summary once the handler has returned.
 func RequestLogger() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
@@ -85,7 +71,7 @@ func CORS() gin.HandlerFunc {
 	}
 }
 
-// JWTClaims: user identity ที่ถูกใส่ลง context
+// JWTClaims is the user identity placed on the request context.
 type JWTClaims struct {
 	UserID    int    `json:"uid"`
 	Username  string `json:"usr"`
@@ -95,11 +81,10 @@ type JWTClaims struct {
 
 const ctxUserKey = "user"
 
-// Auth ตรวจ JWT จาก Authorization: Bearer <token>
+// Auth verifies the JWT from the Authorization header.
 //
-// นอกจาก verify token, ยัง:
-//  - ใส่ claims ลง gin context (UserFromContext ใช้ต่อ)
-//  - ใส่ user.id + session.id ลง baggage → propagate ไป downstream service อัตโนมัติ
+// It also puts user.id and session.id into baggage, which propagates to every
+// downstream service without them having to read the token again.
 func Auth(cfg config.Base) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		raw := c.GetHeader("Authorization")
@@ -118,14 +103,14 @@ func Auth(cfg config.Base) gin.HandlerFunc {
 		}
 		c.Set(ctxUserKey, claims)
 
-		// Set บน span ปัจจุบันทันที (ไม่ต้องรอ BaggageToSpan middleware)
+		// Set on the current span directly rather than waiting for BaggageToSpan.
 		span := trace.SpanFromContext(c.Request.Context())
 		span.SetAttributes(attribute.Int("user.id", claims.UserID))
 		if claims.SessionID != "" {
 			span.SetAttributes(attribute.String("session.id", claims.SessionID))
 		}
 
-		// + baggage → propagate downstream (otelhttp injection ต่อไปยัง service อื่น)
+		// Baggage carries these to the next service via otelhttp injection.
 		ctx := c.Request.Context()
 		members := []baggage.Member{}
 		if m, err := baggage.NewMember("user.id", strconv.Itoa(claims.UserID)); err == nil {
@@ -149,11 +134,8 @@ func Auth(cfg config.Base) gin.HandlerFunc {
 
 // BaggageToSpan copy baggage members → span attributes (current span)
 //
-// ใช้คู่กับ Auth() — baggage propagate อัตโนมัติข้าม service,
-// middleware นี้ทำให้ทุก service เห็น user.id / session.id / order.id เป็น span attribute
-// → Tempo query ได้: { span.user.id = "2" }
-//
-// ต้อง register หลัง OTel middleware + หลัง Auth (ถ้ามี)
+// Copies baggage onto the span so Tempo can be queried by it, for example
+// { span.user.id = "2" }. Register after OTel and after Auth.
 func BaggageToSpan() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		span := trace.SpanFromContext(c.Request.Context())
@@ -165,7 +147,7 @@ func BaggageToSpan() gin.HandlerFunc {
 	}
 }
 
-// UserFromContext ดึง claims ที่ Auth ใส่ไว้
+// UserFromContext returns the claims Auth stored.
 func UserFromContext(c *gin.Context) (*JWTClaims, bool) {
 	v, ok := c.Get(ctxUserKey)
 	if !ok {

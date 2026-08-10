@@ -54,12 +54,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Redis — non-critical. ListProducts เป็น cache-aside ที่ fall through
-	// ไป MariaDB เองเมื่อ cache error และ write-back เป็น best-effort อยู่แล้ว
-	// → Redis หาย = ช้าลง ไม่ใช่พัง. ห้าม os.Exit ตรงนี้.
+	// Redis is not critical here: ListProducts is cache-aside and falls through to
+	// MariaDB on error, and the write-back is best effort. Losing Redis is slower,
+	// not broken, so this must not exit.
 	redisClient, err := db.OpenRedis(cfg)
 	if err != nil {
-		// instrumentation ผิดพลาด = bug ในโค้ดเรา ไม่ใช่ Redis ล่ม
+		// A failure here is a bug in our instrumentation, not a dead Redis.
 		log.Error("redis client init failed", "err", err)
 		os.Exit(1)
 	}
