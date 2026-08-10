@@ -16,7 +16,7 @@ services:
       pullPolicy: Never
     port: 9002
     replicas: 2
-    workloadKind: Deployment
+    workloadKind: Rollout
     uid: 10001
     probes:
       liveness:  { path: /healthz, initialDelaySeconds: 10, periodSeconds: 15 }
@@ -30,9 +30,57 @@ services:
       # and routing it out to the edge and back would add a hop and hide the
       # dependency from the mesh.
       - { name: PAYMENT_SVC_URL, value: http://payment-svc.demo.svc.cluster.local }
+      # Fraction of business requests answered with 500. 0 is off; raise it to
+      # deploy a build that passes /healthz but serves errors, which is what a
+      # canary has to catch and a crashing pod does not.
+      - { name: FAIL_RATE, value: "0" }
     envFromSecret:
       - mariadb-dsn
       - jwt-secret
     topologySpread: true
     pdb: { minAvailable: 1 }
     networkPolicy: false
+
+    rollout:
+      strategy:
+        canary:
+          # 50 because traffic splits by pod count — no Istio routing here, so
+          # at replicas: 2 nothing smaller can actually be produced.
+          steps:
+            - setWeight: 50
+            - analysis:
+                templates:
+                  - templateName: order-svc-success-rate
+            - setWeight: 100
+
+      analysis:
+        address: http://prometheus-server.observability.svc.cluster.local
+        metrics:
+          - name: success-rate
+            # Metrics arrive by push every 10s, not by scrape. A shorter
+            # interval reads a rate() the canary has not exported into yet.
+            interval: 30s
+            count: 4
+            # The pod is ready before its first export exists; without this the
+            # first measurement grades the old pods.
+            initialDelay: 30s
+            # No traffic returns NaN (0/0) or an empty vector, and an empty one
+            # throws inside expr and scores as a provider Error rather than a
+            # failure. Both guards make it a plain failed measurement instead,
+            # so a canary nobody exercised is never promoted.
+            successCondition: len(result) > 0 && !isNaN(result[0]) && result[0] >= 0.95
+            failureLimit: 1
+            # Argo defaults to 4 — two minutes of unreachable Prometheus while
+            # the release keeps advancing.
+            consecutiveErrorLimit: 2
+            # sum with no `by` collapses old and new pods together: without
+            # Istio there is no canary-only label to split on.
+            query: |
+              sum(rate(http_server_request_duration_seconds_count{
+                service="order-svc",
+                http_response_status_code!~"5.."
+              }[2m]))
+              /
+              sum(rate(http_server_request_duration_seconds_count{
+                service="order-svc"
+              }[2m]))

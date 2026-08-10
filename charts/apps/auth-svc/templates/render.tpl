@@ -16,3 +16,4 @@ fighting over the same object on every sync.
 {{ include "platform-service.service" . }}
 {{ include "platform-service.pdb" . }}
 {{ include "platform-service.networkpolicy" . }}
+{{ include "platform-service.analysistemplate" . }}
