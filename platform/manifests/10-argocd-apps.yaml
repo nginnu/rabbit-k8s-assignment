@@ -1,0 +1,70 @@
+# Argo CD Applications.
+#
+# This file is the bootstrap seam and the one thing here that is not itself
+# under GitOps: something has to apply the first Application before Argo CD is
+# managing anything. `make argocd` applies it, and from then on the loop runs
+# without make.
+#
+# dummy only, on purpose. Nothing calls dummy, so a sync that goes wrong takes
+# out a workload no other service depends on. The other five stay with helm
+# until this one has proven the loop.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: dummy
+  # Applications are only read by the controller when they live in the
+  # namespace it watches. In another namespace the object is accepted and then
+  # ignored, with no event to say why.
+  namespace: argocd
+  # Without this the Application object is deleted immediately while the
+  # Deployment, Service and PDB it created stay behind with nothing owning
+  # them — they would then have to be found and removed by hand.
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/nginnu/rabbit-k8s-assignment.git
+    path: charts/apps/dummy
+    # A branch, not a tag or a SHA: the point being proved is that a commit to
+    # main reaches the cluster on its own.
+    targetRevision: main
+    helm:
+      # The release name Helm used. It feeds the app.kubernetes.io/instance
+      # label in the rendered output, so leaving it to default to the
+      # Application name happens to match here — set explicitly so a rename of
+      # the Application does not silently relabel every object.
+      releaseName: dummy
+
+  destination:
+    # The literal string for the cluster Argo CD runs in. Naming it in-cluster
+    # instead only works when a cluster Secret declares that name, and there is
+    # none here.
+    server: https://kubernetes.default.svc
+    namespace: demo
+
+  syncPolicy:
+    automated:
+      # On. dummy's objects are fully described by the chart, so anything in
+      # the cluster that the chart no longer renders is a leftover. Off, a
+      # removed template would keep running forever and the cluster would drift
+      # from git in the direction git cannot see.
+      prune: true
+      # On. A kubectl edit against dummy is reverted at the next reconcile,
+      # which is the property being demonstrated. It is safe here because
+      # nothing else writes to these objects — dummy has no HPA and is not a
+      # Rollout, so there is no second controller whose changes would be
+      # fought.
+      selfHeal: true
+    syncOptions:
+      # demo already exists from 01-namespaces.yaml. Left unset Argo CD would
+      # not create it anyway; stated so that a fresh cluster fails on the
+      # missing namespace rather than creating an unlabelled one that 01 then
+      # disagrees with.
+      - CreateNamespace=false
+      # Takes over the objects helm installed. They carry meta.helm.sh
+      # annotations from the release created by `make apps`; without this the
+      # first sync fails on every one of them as already existing and owned by
+      # something else.
+      - ServerSideApply=true
