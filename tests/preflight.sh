@@ -395,6 +395,49 @@ for s in mariadb app-secrets; do
   fi
 done
 
+# ─── 6  observability ────────────────────────────────────────────────────────
+#
+# The chart versions are pinned in the Makefile like every other component, and
+# the alias Service is the one thing the charts do not create for us.
+
+step "Observability"
+
+OBS_NS="${OBS_NS:-observability}"
+
+for pin in prometheus:PROMETHEUS_VERSION loki:LOKI_VERSION tempo:TEMPO_VERSION \
+           alloy:ALLOY_VERSION grafana:GRAFANA_VERSION; do
+  rel="${pin%%:*}"; var="${pin##*:}"
+  compare "$rel chart" "$(makevar "$var")" \
+    "$(helm list -n "$OBS_NS" -o json 2>/dev/null | python3 -c "
+import json,sys
+try: rs = json.load(sys.stdin)
+except Exception: rs = []
+for r in rs:
+    if r.get('name') == sys.argv[1]:
+        print((r.get('chart') or '').rsplit('-', 1)[-1]); break
+" "$rel" 2>/dev/null)"
+done
+
+# Empty endpoints costs telemetry, not availability: the OTel SDK logs the
+# failed export and the services keep serving. That is what makes it worth a
+# check — nothing else reports it.
+otel_eps=$($KUBECTL -n "$OBS_NS" get endpoints otel-collector \
+  -o jsonpath='{.subsets[0].addresses[0].ip}' 2>/dev/null)
+if [ -n "$otel_eps" ]; then
+  ok "otel-collector resolves to an alloy pod — $otel_eps"
+else
+  bad "otel-collector has no endpoints"
+  note "the alias selector does not match the alloy pods; every signal is being dropped"
+fi
+
+grafana_route=$($KUBECTL -n "$OBS_NS" get httproute grafana \
+  -o jsonpath='{.status.parents[0].conditions[?(@.type=="Accepted")].status}' 2>/dev/null)
+if [ "$grafana_route" = "True" ]; then
+  ok "httproute observability/grafana — accepted"
+else
+  bad "httproute observability/grafana is not accepted (${grafana_route:-missing})"
+fi
+
 # ─── 6  TLS ──────────────────────────────────────────────────────────────────
 #
 # Three things have to hold for a green padlock and each fails on its own: the
