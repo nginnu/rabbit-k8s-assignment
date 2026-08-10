@@ -41,35 +41,44 @@ Acceptance criteria in [docs/goals.md](docs/goals.md).
 - [x] trace_id on every log line
 - [x] verify: follow one request from log to trace to metric
 
-## 6. Progressive delivery
+## 6. Progressive delivery ✅
 
-- [ ] Argo Rollouts installed
-- [ ] canary steps with analysis on a real metric
-- [ ] verify: a good release shifts traffic step by step
-- [ ] verify: a bad release rolls back automatically
+- [x] Argo Rollouts installed
+- [x] canary steps with analysis on a real metric
+- [x] verify: a good release shifts traffic step by step
+- [x] verify: a bad release rolls back automatically
 
-## 7. GitOps
+## 7. GitOps ✅
 
 Argo Rollouts and ArgoCD are separate projects; Rollouts needs no ArgoCD.
 Section 6 does not depend on this one.
 
-- [ ] ArgoCD installed
-- [ ] one Application per service, App of Apps pointing at charts/apps/
-- [ ] `make apps` stays as a bootstrap and escape hatch
-- [ ] verify: a change committed to git reaches the cluster without make
+- [x] ArgoCD installed
+- [x] one Application per service, App of Apps pointing at charts/apps/
+- [x] `make apps` stays as a bootstrap and escape hatch
+- [x] verify: a change committed to git reaches the cluster without make
 
-## 8. Isolation
+## 8. Isolation ✅
 
-- [ ] default-deny NetworkPolicy
-- [ ] explicit allow rules between services that talk to each other
-- [ ] verify: a blocked pod cannot reach the database
+- [x] default-deny NetworkPolicy
+- [x] explicit allow rules between services that talk to each other
+- [x] verify: a blocked pod cannot reach the database
 
-## 9. Deliverables
+## 9. Deliverables ✅
 
-- [ ] README — how to deploy and how to reach it
-- [ ] design notes — the decisions and the trade-offs
-- [ ] `make up` works on a machine that has never run this project
+- [x] README — how to deploy and how to reach it
+- [x] design notes — the decisions and the trade-offs
+- [x] `make up` works on a machine that has never run this project
 
 ## Deferred
 
 - Deploying to a cloud provider — the brief asks for reproducible, not hosted
+- Canary bad-release rollback — proven once mid-note in
+  [notes/04](notes/04-canary-rollout.md), not repeated as a standalone run the
+  way the NetworkPolicy checks were
+- App of Apps — proven on `dummy` only in
+  [notes/05](notes/05-gitops-argocd.md); the other five services are not yet
+  under ArgoCD management
+- NetworkPolicy — applied to the `data` and `observability` tiers; the `demo`
+  tier ships with `networkPolicy: false` (see the README's NetworkPolicy
+  section for why)

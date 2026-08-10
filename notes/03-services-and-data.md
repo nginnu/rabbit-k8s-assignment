@@ -67,6 +67,69 @@ statement is `IF NOT EXISTS` or `INSERT IGNORE`, so re-applying is safe.
 
 ---
 
+## Probes
+
+**Both probes hit the same path, and that is deliberate** — `/healthz` answers
+"this process is alive", which is all either one needs here. A readiness check
+that also tested MariaDB would take every service out of rotation during a
+database blip, turning one failure into six.
+
+| | Path | Delay | Period |
+|---|---|---|---|
+| liveness | `/healthz` | 10s | 15s |
+| readiness | `/healthz` | 5s | 5s |
+
+`web-ui` probes `/` — Next.js has no health endpoint. `dummy` splits them
+(`/healthz`, `/readyz`) because it exists to demonstrate the split.
+
+**Two defaults the template sets on purpose** (`_deployment-rollout.tpl`):
+
+- `timeoutSeconds: 3` — the Kubernetes default of 1s fails a pod that is busy
+  but healthy
+- `hasKey`, not `default`, for the delays — Go templates treat `0` as empty, so
+  `default 10` would silently rewrite an explicit `initialDelaySeconds: 0` into
+  a ten-second wait
+
+**`/healthz` is registered before any middleware** — no auth, no fail injection.
+A liveness probe that can be failed by application logic restarts pods for the
+wrong reason.
+
+## Resources and security context
+
+**Every container has both requests and limits.** Requests are what the
+scheduler packs against; limits are what stops one service from starving the
+node. Set in each `values.yaml`, rendered by one template.
+
+| Tier | requests | limits |
+|---|---|---|
+| auth / order / payment / web-ui | 50m, 96–128Mi | 500m, 384–512Mi |
+| mock-payment, dummy | 20m, 32–64Mi | 200m, 128–256Mi |
+
+CPU limits are ~10× requests: these services idle and then spike on a request.
+Memory limits are ~4× — a Go service that exceeds its memory limit is OOM-killed,
+not throttled, so the headroom matters more.
+
+**Hardening is not per-service** — the same block on every container, from
+`_helpers.tpl`:
+
+```yaml
+allowPrivilegeEscalation: false
+readOnlyRootFilesystem: true
+runAsNonRoot: true
+runAsUser: 10001        # numeric — the kubelet does not resolve names
+capabilities: { drop: ["ALL"] }
+```
+
+A service opts out by name (`readOnlyRootFilesystem: false`, a different `uid`)
+rather than opting in, so a new chart is hardened before anyone thinks about it.
+
+**Also from values, not templates** — `topologySpread` spreads replicas across
+the three kind nodes, `pdb: { minAvailable: 1 }` keeps one alive through a
+drain. `mock-payment` has neither: single replica, nothing depends on it staying
+up.
+
+---
+
 ## Tests
 
 One file per usecase. `make test` runs them all, cheapest first.
