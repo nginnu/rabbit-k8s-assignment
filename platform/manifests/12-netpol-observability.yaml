@@ -1,0 +1,329 @@
+# NetworkPolicy for the observability tier.
+#
+# Split from 11 because `make observability` and `make data` run at different
+# points and each applies its own namespace's objects.
+#
+# Selectors were read off the running pods, not assumed. The upstream charts
+# label differently from the hand-written data manifests: every component here
+# carries both app.kubernetes.io/name and app.kubernetes.io/instance, and
+# prometheus is name=prometheus with component=server — the Deployment and the
+# Service are both called prometheus-server, but no pod label says
+# "prometheus-server". Selecting on that name matches nothing, renders a valid
+# policy, and drops the traffic silently.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: alloy
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: alloy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: alloy
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Every demo pod exports here. Selecting the whole namespace rather than
+    # naming six services is deliberate: the list would need editing on every
+    # new service, and a service that is missing from it loses telemetry
+    # without losing availability — the OTel SDK logs an export failure and
+    # keeps serving, so it is the harder failure to notice.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: demo
+      ports:
+        # gRPC only. platform-config sets OTEL_EXPORTER_OTLP_PROTOCOL=grpc and
+        # the shared otel package uses the *grpc exporters, so 4318 is exposed
+        # by the Service but nothing in this platform sends to it.
+        - protocol: TCP
+          port: 4317
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # The three exporters in values/alloy.yaml, on the ports that file names —
+    # Loki push on 3100, Tempo OTLP HTTP on 4318, Prometheus remote-write on
+    # 80. Prometheus is port 80 here, not 9090: the chart's Service maps 80 to
+    # the container. A rule written for 9090 drops every metric.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: loki
+      ports:
+        - protocol: TCP
+          port: 3100
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: tempo
+      ports:
+        - protocol: TCP
+          port: 4318
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9090
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: grafana
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: grafana
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: grafana
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # The gateway carries no app.kubernetes.io/name at all — only
+    # gateway.networking.k8s.io/gateway-name. This matches the `gateway` peer
+    # in _networkpolicy.tpl.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+          podSelector:
+            matchLabels:
+              gateway.networking.k8s.io/gateway-name: platform
+      ports:
+        - protocol: TCP
+          port: 3000
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # The three provisioned datasources, on the ports values/grafana.yaml
+    # dials: Prometheus :80, Loki :3100, Tempo :3200. Tempo is 3200 for
+    # Grafana's queries and 4318 for Alloy's writes — two different ports on
+    # the same pod, and using one for both leaves half the stack blank.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9090
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: loki
+      ports:
+        - protocol: TCP
+          port: 3100
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: tempo
+      ports:
+        - protocol: TCP
+          port: 3200
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: prometheus
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: prometheus
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: alloy
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: grafana
+      ports:
+        - protocol: TCP
+          port: 9090
+    # The Argo Rollouts controller, and it is not obvious. The Prometheus
+    # metric provider runs the query in-process over HTTP from the controller
+    # pod — there is no AnalysisRun pod, and none has ever appeared in this
+    # cluster. So the source is the argo-rollouts namespace, not demo, even
+    # though the AnalysisRun object lives in demo alongside order-svc.
+    #
+    # Leaving this out does not fail the canary: it scores as a provider Error,
+    # and with consecutiveErrorLimit 2 the rollout aborts on a network drop
+    # that looks like a bad release.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: argo-rollouts
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: argo-rollouts
+      ports:
+        - protocol: TCP
+          port: 9090
+  egress:
+    # DNS only. values/prometheus.yaml disables every kubernetes_sd scrape job
+    # and turns on web.enable-remote-write-receiver — Alloy pushes, Prometheus
+    # never pulls. The one job left scrapes 127.0.0.1, which no policy governs.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: loki
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: loki
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: loki
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: alloy
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: grafana
+      ports:
+        - protocol: TCP
+          port: 3100
+    # Loki gossips with itself over the loki-memberlist Service even at
+    # replication_factor 1. One replica today, so this matches a single pod
+    # talking to its own address — it costs nothing now and is what a second
+    # replica needs to join the ring instead of hanging on startup.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: loki
+      ports:
+        - protocol: TCP
+          port: 7946
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: loki
+      ports:
+        - protocol: TCP
+          port: 7946
+    # Not "dns only", and this is the rule that would have been missed. The
+    # loki-0 pod runs a second container, loki-sc-rules (kiwigrid/k8s-sidecar)
+    # with METHOD=WATCH — a standing watch against the Kubernetes API for
+    # ConfigMaps labelled loki_rule. A policy is per-pod, not per-container, so
+    # cutting this pod to DNS cuts that sidecar off the API server.
+    #
+    # The API server is a hostNetwork process on the control-plane node
+    # (172.19.0.4:6443 here), so no pod or namespace selector can name it —
+    # selectors match pods, and this is a node address. It has to be an
+    # ipBlock, and the CIDR is the kind node network, which is a property of
+    # the local Docker network rather than anything in this repo. That makes
+    # this the one rule here that is environment-specific.
+    - to:
+        - ipBlock:
+            cidr: 172.19.0.0/16
+      ports:
+        - protocol: TCP
+          port: 6443
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tempo
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: tempo
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: tempo
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Two ports, two callers: Alloy writes traces over OTLP HTTP on 4318,
+    # Grafana queries them on 3200. Splitting them keeps each caller to the
+    # port it actually uses, so Grafana cannot write and Alloy cannot query.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: alloy
+      ports:
+        - protocol: TCP
+          port: 4318
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: grafana
+      ports:
+        - protocol: TCP
+          port: 3200
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53

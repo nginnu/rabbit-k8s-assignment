@@ -1,0 +1,174 @@
+# NetworkPolicy for the data tier.
+#
+# Separate from the observability policies in 12 because the two apply at
+# different points: `make data` brings this namespace up long before
+# `make observability` exists, and a single file would force one target to
+# apply objects for a namespace the other owns.
+#
+# A NetworkPolicy is one-sided. The charts give auth/order/payment egress to
+# mariadb and redis, but egress alone reaches nothing — until the matching
+# ingress exists here, turning `networkPolicy: true` on in charts/ drops every
+# query. That is why nothing is switched on yet, and why this file has to land
+# first.
+#
+# Selectors here mirror charts/platform-service/templates/_networkpolicy.tpl.
+# The peer catalogue there selects mariadb and redis on
+# app.kubernetes.io/name, and 05/06 do set exactly that on the pod template —
+# so both sides agree. If either side is edited, both move together or the
+# traffic is dropped with nothing in the object to look at.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mariadb
+  namespace: data
+  labels:
+    app.kubernetes.io/name: mariadb
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mariadb
+  # Naming a type with an empty rule list is what denies that direction.
+  # Omitting Egress would leave egress unrestricted while the policy still
+  # looked complete.
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # namespaceSelector and podSelector inside ONE list entry mean AND: these
+    # pods in that namespace. Split across two entries they would mean OR —
+    # every pod in demo, plus every pod anywhere carrying that name. One dash
+    # is the whole difference.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: demo
+          podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                # mock-payment is absent deliberately. config.LoadBase demands
+                # MARIADB_DSN and panics without it, but cmd/mock-payment/main.go
+                # never calls db.OpenMariaDB — the Secret satisfies that, not a
+                # network path. An allow here would carry no traffic.
+                values: [auth-svc, order-svc, payment-svc]
+      ports:
+        - protocol: TCP
+          port: 3306
+    # The schema Job. It runs in this namespace, not demo, so the rule above
+    # does not cover it — and `make data` blocks on
+    # `wait --for=condition=complete job/mariadb-init`. Without this rule that
+    # wait runs to its 180s timeout on every fresh `make up` and the failure
+    # reads as a broken database rather than a dropped packet.
+    #
+    # ttlSecondsAfterFinished deletes the Job 120s after it finishes, so this
+    # matches nothing in a settled cluster. It is only ever needed on the run
+    # that builds the schema, which is exactly the run nobody is watching.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mariadb-init
+      ports:
+        - protocol: TCP
+          port: 3306
+  egress:
+    # DNS only: this is a destination, never a caller. The init Job resolves
+    # `mariadb` by name, and the database itself resolves nothing — but the
+    # policy above selects only mariadb pods, so this covers the server's own
+    # lookups and nothing more.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# The init Job needs its own policy. It is a client, not a destination, and the
+# mariadb policy above governs mariadb pods only — a Job with no policy
+# selecting it stays unisolated, but writing this makes the path explicit and
+# survives a future default-deny over the namespace.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mariadb-init
+  namespace: data
+  labels:
+    app.kubernetes.io/name: mariadb-init
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mariadb-init
+  policyTypes:
+    - Ingress
+    - Egress
+  # Nothing calls the Job.
+  ingress: []
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: mariadb
+      ports:
+        - protocol: TCP
+          port: 3306
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis
+  namespace: data
+  labels:
+    app.kubernetes.io/name: redis
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: redis
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: demo
+          podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                # payment-svc is absent deliberately: cmd/payment-svc/main.go
+                # calls db.OpenMariaDB and never db.OpenRedis. auth-svc and
+                # order-svc are the only two that open Redis.
+                values: [auth-svc, order-svc]
+      ports:
+        - protocol: TCP
+          port: 6379
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
