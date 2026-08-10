@@ -1,23 +1,150 @@
 {{/*
-NetworkPolicy — off by default. `networkPolicy: true` renders a default-deny
-ingress policy; allow rules are layered on top.
+NetworkPolicy — off by default. `networkPolicy: true` renders one policy per
+service: default-deny both directions, with the peers named in
+`networkPolicy.ingress` / `networkPolicy.egress` allowed back through.
+
+Peers are names, not selectors. Every tier this platform talks to labels itself
+differently — the Istio gateway carries no app.kubernetes.io/name at all, only
+gateway.networking.k8s.io/gateway-name — so a values file holding raw selectors
+would repeat four different label conventions in six charts. A wrong selector
+does not fail: it renders a valid policy that matches no pod, and the traffic
+is dropped with nothing in the object to look at. The name is checked here
+instead, and an unknown one stops the render.
+
+The other trap this hides is YAML shape. Inside one `from` entry, a
+namespaceSelector and a podSelector at the same level mean AND (those pods in
+that namespace); split across two list entries they mean OR (all pods in that
+namespace, or those pods here). One dash is the difference between reaching
+mariadb and reaching every pod in the data namespace.
 */}}
+
+{{/*
+The peer catalogue. Each entry renders one `from`/`to` element plus its ports.
+
+Cross-namespace peers select on kubernetes.io/metadata.name, which the API
+server sets on every namespace and nobody can forget to apply — the hand-written
+labels in 01-namespaces.yaml are not on kube-system or istio-system.
+*/}}
+{{- define "platform-service.networkpolicy.peer" -}}
+{{- $peer := .peer -}}
+{{- $ns := .ns -}}
+{{- if eq $peer "gateway" }}
+- from_or_to:
+  - namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: istio-system
+    podSelector:
+      matchLabels:
+        gateway.networking.k8s.io/gateway-name: platform
+{{- else if eq $peer "dns" }}
+- from_or_to:
+  - namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: kube-system
+    podSelector:
+      matchLabels:
+        k8s-app: kube-dns
+  ports:
+  - protocol: UDP
+    port: 53
+  - protocol: TCP
+    port: 53
+{{- else if eq $peer "alloy" }}
+- from_or_to:
+  - namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: observability
+    podSelector:
+      matchLabels:
+        app.kubernetes.io/name: alloy
+  ports:
+  - protocol: TCP
+    port: 4317
+{{- else if eq $peer "mariadb" }}
+- from_or_to:
+  - namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: data
+    podSelector:
+      matchLabels:
+        app.kubernetes.io/name: mariadb
+  ports:
+  - protocol: TCP
+    port: 3306
+{{- else if eq $peer "redis" }}
+- from_or_to:
+  - namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: data
+    podSelector:
+      matchLabels:
+        app.kubernetes.io/name: redis
+  ports:
+  - protocol: TCP
+    port: 6379
+{{- else if hasPrefix "svc:" $peer }}
+{{- $target := trimPrefix "svc:" $peer }}
+- from_or_to:
+  - podSelector:
+      matchLabels:
+        app.kubernetes.io/name: {{ $target }}
+{{- else }}
+{{- fail (printf "networkPolicy: unknown peer %q on a service in namespace %s — use gateway, dns, alloy, mariadb, redis, or svc:<name>" $peer $ns) }}
+{{- end }}
+{{- end -}}
+
+{{/*
+Renders a rule list for one direction. `from_or_to` above is a placeholder the
+caller rewrites, so the peer catalogue is written once instead of twice.
+*/}}
+{{- define "platform-service.networkpolicy.rules" -}}
+{{- $key := .key -}}
+{{- $ns := .ns -}}
+{{- range $peer := .peers }}
+{{- $rule := include "platform-service.networkpolicy.peer" (dict "peer" $peer "ns" $ns) -}}
+{{ $rule | replace "from_or_to" $key }}
+{{- end }}
+{{- end -}}
+
 {{- define "platform-service.networkpolicy" -}}
 {{- range $name, $svc := .Values.services }}
 {{- if $svc.networkPolicy }}
+{{- $ns := $.Values.namespace | default "demo" }}
+{{- $np := $svc.networkPolicyPeers | default dict }}
+{{- $ingress := $np.ingress | default list }}
+{{/*
+  DNS is injected, never declared. A policy with Egress in policyTypes denies
+  everything not listed, and the first thing any of these services does is
+  resolve mariadb — so a values file that forgets dns produces a pod that
+  cannot look up its own database and reports it as a connection failure.
+  Leaving it to be typed six times means it gets forgotten once.
+*/}}
+{{- $egress := concat ($np.egress | default list) (list "dns") | uniq }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ $name }}-default-deny
-  namespace: {{ $.Values.namespace | default "demo" }}
+  name: {{ $name }}
+  namespace: {{ $ns }}
 spec:
   podSelector:
     matchLabels:
       app.kubernetes.io/name: {{ $name }}
+  {{/*
+    Both types are always listed. Naming a type with an empty rule list is what
+    denies that direction; omitting Egress would leave egress unrestricted and
+    the policy would look complete while enforcing half of it.
+  */}}
   policyTypes:
     - Ingress
-  ingress: []
+    - Egress
+  ingress:
+    {{- if $ingress }}
+    {{- include "platform-service.networkpolicy.rules" (dict "peers" $ingress "key" "from" "ns" $ns) | trim | nindent 4 }}
+    {{- else }} []
+    {{- end }}
+  egress:
+    {{- include "platform-service.networkpolicy.rules" (dict "peers" $egress "key" "to" "ns" $ns) | trim | nindent 4 }}
 {{- end }}
 {{- end }}
 {{- end -}}

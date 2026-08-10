@@ -42,4 +42,8 @@ services:
       - { name: PORT, value: "8080" }
     topologySpread: true
     pdb: { minAvailable: 1 }
+
     networkPolicy: false
+    networkPolicyPeers:
+      ingress: [gateway]
+      egress: [alloy]

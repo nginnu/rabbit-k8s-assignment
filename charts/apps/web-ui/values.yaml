@@ -41,4 +41,11 @@ services:
       - { name: HOSTNAME, value: "0.0.0.0" }
     topologySpread: true
     pdb: { minAvailable: 1 }
+
     networkPolicy: false
+    networkPolicyPeers:
+      ingress: [gateway]
+      # No backend egress: lib/api.ts runs in the browser, so the calls to
+      # auth/order/payment leave the user's machine, not this pod. Option 1
+      # moves them server-side and this list grows to the three services.
+      egress: [alloy]

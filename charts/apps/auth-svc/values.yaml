@@ -38,4 +38,12 @@ services:
 
     topologySpread: true
     pdb: { minAvailable: 1 }
+
+    # Declared but not enforced — enabling is done one service at a time so a
+    # dropped flow is traceable to the release that dropped it.
     networkPolicy: false
+    networkPolicyPeers:
+      # The browser calls /api/auth through the gateway itself, so the gateway
+      # is a direct client here. Under option 1 (notes/06) this becomes web-ui.
+      ingress: [gateway]
+      egress: [mariadb, redis, alloy]

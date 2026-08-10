@@ -40,4 +40,13 @@ services:
       - mariadb-dsn
       - jwt-secret
     topologySpread: false
+
     networkPolicy: false
+    networkPolicyPeers:
+      # Not edge-facing: a gateway stand-in is only ever called from inside.
+      ingress: [svc:payment-svc]
+      # No mariadb, deliberately. config.LoadBase demands MARIADB_DSN and panics
+      # without it, but it only reads the env var — main.go never calls
+      # db.OpenMariaDB. The Secret satisfies that, not a network path, so an
+      # allow rule here would carry no traffic.
+      egress: [alloy]

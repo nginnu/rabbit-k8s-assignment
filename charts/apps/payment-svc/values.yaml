@@ -37,4 +37,12 @@ services:
       - jwt-secret
     topologySpread: true
     pdb: { minAvailable: 1 }
+
     networkPolicy: false
+    networkPolicyPeers:
+      # The other half of the order-svc cycle: order-svc starts a payment, this
+      # service calls back to settle it.
+      ingress: [gateway, svc:order-svc]
+      # No redis: this service opens MariaDB only. auth-svc and order-svc are
+      # the two that call db.OpenRedis.
+      egress: [svc:order-svc, svc:mock-payment, mariadb, alloy]

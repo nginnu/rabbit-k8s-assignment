@@ -34,4 +34,18 @@ services: {}
 #       - some-credential
 #     topologySpread: true
 #     pdb: { minAvailable: 1 }
-#     networkPolicy: false
+#     networkPolicy: false        # true denies both directions, then allows
+#                                 # only the peers named below
+#     networkPolicyPeers:         # names, not selectors — the template owns the
+#                                 # labels and ports each peer actually has
+#       ingress: [gateway]        #   gateway     the Istio Gateway pod
+#       egress:  [mariadb, redis] #   mariadb     data ns, 3306
+#                                 #   redis       data ns, 6379
+#                                 #   alloy       observability ns, OTLP 4317
+#                                 #   dns         kube-dns, 53 — always added,
+#                                 #               never write it here
+#                                 #   svc:<name>  another service in this ns
+#
+#     A pair of services that call each other needs both halves: egress on the
+#     caller and ingress on the callee. One direction alone leaves the caller
+#     looking correctly configured while the destination drops the packet.
