@@ -34,12 +34,12 @@ Acceptance criteria in [docs/goals.md](docs/goals.md).
 - [x] verify: `https://` with no browser warning
 - [x] verify: a test checks the traffic has no plaintext credentials
 
-## 5. Observability — LGTM + OpenTelemetry
+## 5. Observability — LGTM + OpenTelemetry ✅
 
-- [ ] OpenTelemetry SDK in each service, OTLP to a collector
-- [ ] Prometheus (metrics), Loki (logs), Tempo (traces), Grafana (dashboards)
-- [ ] trace_id on every log line
-- [ ] verify: follow one request from log to trace to metric
+- [x] OpenTelemetry SDK in each service, OTLP to a collector
+- [x] Prometheus (metrics), Loki (logs), Tempo (traces), Grafana (dashboards)
+- [x] trace_id on every log line
+- [x] verify: follow one request from log to trace to metric
 
 ## 6. Progressive delivery
 
