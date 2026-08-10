@@ -10,7 +10,8 @@ export default function Nav() {
   const [loggedIn, setLoggedIn] = useState(false);
   const [username, setUsername] = useState<string | null>(null);
 
-  // Re-check token ทุกครั้งที่ route เปลี่ยน (login/logout redirect)
+  // Re-check the token on every route change, so a login or logout redirect
+  // updates the nav.
   // + listen storage event (cross-tab)
   useEffect(() => {
     setLoggedIn(!!getToken());
