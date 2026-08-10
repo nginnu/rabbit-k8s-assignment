@@ -193,10 +193,6 @@ observability: namespaces
 	@kubectl -n observability rollout status deployment/alloy --timeout=180s
 	@kubectl -n observability rollout status deployment/grafana --timeout=180s
 	@kubectl -n observability rollout status statefulset/loki --timeout=180s
-	@# The alias Service is what the applications resolve. Empty endpoints here
-	@# means every service is about to fail its first start.
-	@kubectl -n observability wait --for=jsonpath='{.subsets[0].addresses}' \
-		endpoints/otel-collector --timeout=120s
 	@kubectl apply -f $(MANIFESTS)/08-grafana-route.yaml
 
 ## up: cluster, gateway, images, observability, apps
