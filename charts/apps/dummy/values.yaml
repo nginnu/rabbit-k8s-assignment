@@ -24,7 +24,7 @@ services:
       # so the kubelet must not try to pull.
       pullPolicy: Never
     port: 8080
-    replicas: 2
+    replicas: 5
     workloadKind: Deployment
     # Must be a number. The kubelet cannot read /etc/passwd inside the image,
     # so it cannot check whether a username maps to root, and refuses to start
