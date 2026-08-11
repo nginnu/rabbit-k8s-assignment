@@ -108,7 +108,7 @@ Releases with reduced Blast Radius.
 Zero Direct Access — No direct changes to Production. All changes must go
 through Git PRs.
 
-Details: [canary rollout](notes/04-canary-rollout.md) · [GitOps with Argo CD](notes/05-gitops-argocd.md)
+Details: [GitOps with Argo CD](notes/05-gitops-argocd.md) · [Canary rollout](notes/04-canary-rollout.md) 
 
 ---
 
@@ -282,7 +282,7 @@ the Gateway.
                               https://localhost/
                                       │
                             ┌─────────▼─────────┐
-                            │   Istio Gateway   │  (istio-system)
+                            │   Istio Gateway   │  
                             └─────────┬─────────┘
                                       │
    ══════════════════════════ namespace: demo ═════════════════════════════════
