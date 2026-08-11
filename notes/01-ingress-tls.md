@@ -96,28 +96,3 @@ certificate chain verifies against the system trust store      PASS
 ```
 
 Port 80 stays open — it is the plaintext path the proof compares against.
-
----
-
-## Things that cost time
-
-**`exit` inside a Makefile recipe.** A multi-line `if ... exit 1; fi` got
-mangled into `it 1` before it reached the shell. Moved the version checks into
-`platform/scripts/check-version.sh`.
-
-**Version pins are worth checking after install.** Istio below the pinned
-version ignores `infrastructure.parametersRef` on the Gateway and logs
-nothing. The Envoy pod loses its nodeSelector and hostPort, lands on the wrong
-node, and `localhost` refuses the connection with everything looking correct
-in git.
-
-**Byte count instead of packet count.** The first version of the proof
-accepted any capture over 0 bytes — an empty pcap is still ~264 bytes of file
-header. A real https exchange is ~9 KB, ~52 packets. Counting packets, not
-bytes, is what actually separates a working capture from a broken one.
-
-**A marker that appears in ordinary traffic.** Searching for `GET` matched the
-request line, not the body, and over HTTP/2 there's no ASCII `GET` on the wire
-at all — so the check passed for a reason unrelated to encryption. The marker
-is now `hunter2-<epoch>-<random>`, which can only come from the body. Both
-traps were found by running the test against a setup where it should fail.

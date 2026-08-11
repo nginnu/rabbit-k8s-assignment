@@ -43,5 +43,5 @@ go-ahead, not a side effect of writing docs.
 - [notes/01-ingress-tls.md](../notes/01-ingress-tls.md) — Gateway, TLS, packet capture
 - [notes/03-services-and-data.md](../notes/03-services-and-data.md) — probes, resources, workloads
 - [notes/04-canary-rollout.md](../notes/04-canary-rollout.md) — Argo Rollouts canary, proven both directions
-- [notes/06-network-isolation.md](../notes/06-network-isolation.md) — NetworkPolicy, what's applied vs not
+- [notes/05-gitops-argocd.md](../notes/05-gitops-argocd.md) — ArgoCD sync, self-heal, drift
 - [notes/07-observability.md](../notes/07-observability.md) — LGTM pipeline, correlation, verification detail

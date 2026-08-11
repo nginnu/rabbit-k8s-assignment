@@ -1,18 +1,7 @@
 # Argo Rollouts canary on order-svc
 
 **Date:** 2026-08-10
-**Status:** happy path proven; bad-release rollback observed mid-note (see below) — TODO box stays unticked, no NetworkPolicy-style repeat run yet
-
----
-
-## Order matters
-
-| # | Piece | Why |
-|---|---|---|
-| 1 | `make rollouts` | controller has to exist before a Rollout object means anything |
-| 2 | `workloadKind: Rollout` in values | the library chart's `_deployment-rollout.tpl` already branches on this — no template change needed |
-| 3 | k6 load, started first | analysis window needs traffic already flowing before `initialDelay` starts counting |
-| 4 | `make apps` | ships the pod-template change that triggers the canary |
+**Status:** happy path + bad-release rollback both observed (see below)
 
 ---
 
@@ -24,14 +13,11 @@
 | kubectl-argo-rollouts plugin | v1.9.1 |
 | k6 | v1.3.0 |
 
-Strategy (`charts/apps/order-svc/values.yaml`): `setWeight 50` → `analysis` →
-`setWeight 100`. 2 replicas, no Istio traffic split, so 50% is the only weight
-the cluster can produce — asking for 10% would still land 50/50 and the
-analysis would be grading a lie.
+Strategy: `setWeight 50` → `analysis` → `setWeight 100`. 2 replicas, no Istio
+traffic split, so 50% is the only weight the cluster can produce — asking for
+10% would still land 50/50 and the analysis would be grading a lie.
 
-Analysis query: success rate over a 2m window, `sum(rate(...status!~"5.."))
-/ sum(rate(...))`, `interval: 30s`, `count: 4`, `initialDelay: 30s`,
-`successCondition: len(result) > 0 && !isNaN(result[0]) && result[0] >= 0.95`,
+Analysis: success rate over a 2m window, `successCondition: result[0] >= 0.95`,
 `failureLimit: 1`, `consecutiveErrorLimit: 2`.
 
 ---
@@ -50,10 +36,8 @@ terminal 2   make apps
 terminal 3   kubectl argo rollouts get rollout order-svc -n demo --watch
 ```
 
-5 req/s, not fewer: the analysis reads a 2m rate() window; at ~10 requests in
-that window one stray 5xx alone is 9/10 = 0.90, under the 0.95 line, on a
-build with no real problem. `N >= 20` clears one flaky request; 5 req/s gives
-~600 in any 2m window k6 covers.
+5 req/s, not fewer: the analysis reads a 2m rate() window; at low volume one
+stray 5xx alone can drop below the 0.95 line on a build with no real problem.
 
 ---
 
@@ -84,31 +68,9 @@ revision 3   canary ReplicaSet ScaledDown, AnalysisRun ✖ Failed  ✖ 2
 revision 2   stable ReplicaSet ✔ Healthy — both pods still on the last good build
 ```
 
-AnalysisRun measurements: `0.8359891061216561`, then `0.8071591158771856` —
-two consecutive readings under the 0.95 line, `failureLimit: 1` tripped after
-the second, canary scaled down, traffic never left the stable ReplicaSet.
+![kubectl argo rollouts get rollout (Degraded, revision 3 aborted) beside the k6 run that tripped it — 91.85% success, 8.15% failed, both thresholds crossed](screenshot/argorollout/Screenshot%202569-08-10%20at%2013.49.21.png)
 
----
-
-## Traps
-
-| # | Trap | Cost |
-|---|---|---|
-| 1 | `kubectl wait --for=jsonpath='{...}'` with no `=<value>` | rejected at arg-parse, never touches the cluster — broke `make up` from scratch, moved detection into tests |
-| 2 | Argo Rollouts does not adopt an existing Deployment with the same selector | `kubectl delete deployment order-svc -n demo --cascade=orphan` required first; a plain delete drops both pods |
-| 3 | setWeight must match what the cluster can produce | at replicas 2, no Istio split, 10% would still be graded as 50/50 |
-| 4 | no traffic during analysis → `NaN` (0/0), not an empty vector; an empty vector throws inside `expr` and scores as a provider Error, not a failure | both guards in `successCondition` are load-bearing |
-| 5 | no Istio → no canary-only label | the query measures the service as a whole — blast radius, not canary isolation |
-
----
-
-## Not yet done
-
-- No repeat of the bad-release run captured with fresh timestamps in this
-  note beyond the one above — worth re-running once section 6 verification
-  is written up formally, so the TODO box has its own dedicated proof rather
-  than borrowing this note's.
-- Rollback here means "stopped advancing, stable stays serving" — nothing in
-  this stage removes the failed ReplicaSet or resets `FAIL_RATE`; that is a
-  manual follow-up (`kubectl argo rollouts abort` / undo + values edit), not
-  something the canary does on its own.
+Two consecutive AnalysisRun readings under the 0.95 line tripped
+`failureLimit: 1`; canary scaled down, traffic never left the stable
+ReplicaSet. Rollback here means "stopped advancing, stable stays serving" —
+nothing resets `FAIL_RATE`; that's a manual follow-up.

@@ -1,7 +1,7 @@
 # Observability — metrics, logs and traces from one pipeline
 
 **Date:** 2026-08-10
-**Status:** done — `make test-o11y` (14 checks) and `make test-journey` (6 checks)
+**Status:** done — `make test-o11y` (16 checks) and `make test-journey` (8 checks)
 
 ---
 
@@ -40,66 +40,59 @@ signals and forwards each to its own store.
 
 ## Push, not scrape
 
-**Prometheus scrapes nothing here — Alloy writes to it.**
+Prometheus scrapes nothing — Alloy pushes to it.
 
-- `web.enable-remote-write-receiver` in `values/prometheus.yaml`; off by default,
-  and without it Alloy's writes get a 404 with nothing in any log to say why
-- every chart-default scrape job is disabled by name — a dozen `kubernetes_sd`
-  jobs failing against RBAC this release does not grant
-
-**Why push** — one export path for all three signals. A scrape model needs
-`/metrics` on every service plus a second path for logs and traces; the SDK
-already emits all three over OTLP.
-
-**Cost** — telemetry is batched, so nothing is queryable the instant a request
-returns. Both test suites wait 25–30s rather than retrying until data appears,
-which would hide a pipeline that had genuinely stopped.
+- `web.enable-remote-write-receiver` on (`values/prometheus.yaml`), off by
+  default — without it, Alloy's writes 404 with no log saying why
+- every chart-default scrape job disabled by name — otherwise a dozen
+  `kubernetes_sd` jobs fail against RBAC this release doesn't grant
+- why: one export path for all three signals, since the OTLP SDK already
+  emits metrics, logs and traces together — scrape needs `/metrics` plus a
+  separate path for the other two
 
 ---
 
 ## The alias every service points at
 
-**Services resolve `otel-collector`, not `alloy`** —
-`platform/manifests/07-observability.yaml` is a Service with no selector of its
-own name, pointing at Alloy's pods.
+Services resolve `otel-collector`, not `alloy` — `07-observability.yaml` is a
+Service pointing at Alloy's pods under a name that isn't its own.
 
-- one address in `charts/apps/platform-config/values.yaml`:
-  `OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector.observability.svc.cluster.local:4317`
-- swapping Alloy for an OpenTelemetry Collector is a Service edit, not a rebuild
+- one address, set once: `OTEL_EXPORTER_OTLP_ENDPOINT` in `platform-config`
+- swapping Alloy for an OTel Collector later is a Service edit, not a rebuild
   of six images
-
-**Failure mode it introduces** — an alias with no endpoints resolves fine and
-drops everything. The services keep serving and record nothing. `o11y-stack.sh`
-checks the endpoint list for exactly this.
+- risk: an alias with no endpoints resolves fine and silently drops
+  everything — services keep serving, nothing gets recorded.
+  `o11y-stack.sh` checks the endpoint list for exactly this
 
 ---
 
 ## Correlation — the part that makes it usable
 
-The storefront hands back the ids needed to go dig, on the request that failed:
+The storefront returns trace_id/order_id/user_id/session_id on a failed
+checkout — the ids needed to go dig:
 
 ![failed checkout with trace_id/order_id/user_id/session_id exposed](screenshot/o11y/Screenshot%202569-08-11%20at%2001.16.13.png)
 
-**A trace id comes back in the response header.** `traceresponse` on every
-reply, so a specific request is findable afterwards instead of searching by
-time.
+Every reply carries a `traceresponse` header, so one request is findable
+afterwards instead of searched for by time.
 
-**Three links are provisioned, not configured by hand** (`values/grafana.yaml`):
+Three links, provisioned in `values/grafana.yaml`, not clicked together by
+hand:
 
 | From | To | How |
 |---|---|---|
-| log line | its trace | `derivedFields` regex on `traceid` — two patterns, logs arrive as JSON and as logfmt |
+| log line | its trace | `derivedFields` regex on `traceid` — JSON and logfmt both matched |
 | span | its logs | `tracesToLogsV2`, filtered by `deployment_environment` |
 | latency graph | a slow trace | `exemplarTraceIdDestinations` |
 
-A Loki entry carries its `traceid` as a first-class field, not buried in text —
-the paired ERROR log below it shares the same id:
+`traceid` is a first-class Loki field, not buried in text — the paired ERROR
+log below shares it:
 
 ![log line and its trace id side by side in Loki](screenshot/o11y/Screenshot%202569-08-11%20at%2001.21.13.png)
 
-**Context propagation is the application's job** — Istio does not do it. The
-services pass `traceparent` themselves, and one trace spanning payment-svc →
-order-svc → mock-payment is the evidence that they do:
+Context propagation is the application's job, not Istio's — services pass
+`traceparent` themselves. One trace spanning payment-svc → order-svc →
+mock-payment is the evidence:
 
 ![Tempo span tree: payment-svc calls order-svc, then mock-payment, ends 402](screenshot/o11y/Screenshot%202569-08-11%20at%2001.17.25.png)
 
@@ -110,13 +103,13 @@ order-svc → mock-payment is the evidence that they do:
 ## Verification
 
 ```sh
-make test-o11y      # 14 checks — the stack is assembled and receiving
-make test-journey   # 6 checks  — one purchase, followed end to end
+make test-o11y      # 16 checks — the stack is assembled and receiving
+make test-journey   #  8 checks — one purchase, followed end to end
 ```
 
 `o11y-stack.sh` asks whether the pipeline is wired. `o11y-journey.sh` buys a
-shirt in five requests, then asks whether the platform can say what happened —
-and prints Grafana links for that exact run.
+shirt in five requests, asks whether the platform can say what happened, and
+prints Grafana links for that run.
 
 What the journey suite proves, in order:
 
