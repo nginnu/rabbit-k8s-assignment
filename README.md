@@ -6,16 +6,16 @@ A reproducible Kubernetes deployment, built locally on kind.
                               https://localhost/
                                       │
                             ┌─────────▼─────────┐
-                            │   Istio Gateway   │   TLS, local CA
+                            │  Traefik Gateway  │   TLS, local CA
                             └─────────┬─────────┘
                                       │
         ┌──────────────┬──────────────┼──────────────┬──────────────┐
         ▼              ▼              ▼              ▼              ▼
    [ web-ui ]    [ auth-svc ]   [ order-svc ]  [ payment-svc ]  [ grafana ]
-                       │              │              │               │
+    ns: web            │              │              │               │
                        │              │              ▼               │
                        │              │       [ mock-payment ]       │
-                       │              │                              │
+                       │              │        ns: api (all four)    │
                        └──────┬───────┘                              │
                               ▼                                      │
                      [ mariadb ] [ redis ]                           │
@@ -26,6 +26,19 @@ A reproducible Kubernetes deployment, built locally on kind.
 
    delivery:  Argo Rollouts (canary)  ·  Argo CD (GitOps, https://localhost/argocd)
 ```
+
+Istio is out of this stack — removed completely, no `istiod`, no `istio-system`.
+Traefik owns ingress now (chart `41.2.0`, app `v3.7.10`, namespace `traefik`).
+Istio is planned to come back at a later stage as a service mesh only (sidecar
+injection), never again as the Gateway; that stage has not started.
+
+`make up` ran end to end on 2026-08-13 against this tree: 3 kind nodes Ready,
+every release installed into the namespace its chart declares, every pod
+Running with 0 restarts. The full suite passed after — 51 checks across
+routing, TLS, checkout, resilience and observability; see
+[docs/testing.md](docs/testing.md) for the breakdown. That run was a rebuild
+on a machine that had already built and loaded these images; `make up` on a
+genuinely fresh clone is still unproven (tracked in [TODO.md](TODO.md)).
 
 **What this is** — a shirt shop, deliberately small but split the way a real one
 is: a Next.js frontend, three Go services that call each other, a MariaDB
@@ -174,7 +187,7 @@ unauthorized parties from reading or modifying traffic.
 **How** — How does it work / Why is it better?
 
 For local development, I use mkcert as a trusted local CA, with cert-manager
-issuing the certificate to the Istio Gateway on port 443. In Production, I
+issuing the certificate to the Traefik Gateway on port 443. In Production, I
 would terminate TLS at the Edge/Load Balancer and use Gateway API for
 standardized traffic routing.
 
@@ -218,6 +231,10 @@ service-to-service mTLS.
 
 Local proof — packet capture showing no plaintext credential crosses the
 wire once TLS is on: [ingress + TLS proof](notes/01-ingress-tls.md#result).
+That capture ran against the Istio Gateway, before the Traefik switch. Re-run
+against Traefik on 2026-08-13 (`tls-proof.sh`, 4/4 PASS): chain still verifies
+against the system trust store, http still leaks the password, https still
+carries none — see [docs/testing.md](docs/testing.md).
 
 ---
 
@@ -276,47 +293,62 @@ directly exposed through the Gateway. East-west traffic is explicitly
 allowed only between required services, and the data tier is isolated from
 the Gateway.
 
-## Current Assignment — Temporary
+## Current Assignment — where this stands
+
+`demo` is gone. The frontend and the six backend workloads are split into two
+namespaces so a NetworkPolicy peer can be written by namespace instead of by
+naming every pod (`kubernetes.io/metadata.name` on the namespace, set by the
+API server, not a hand-applied label — see `platform/manifests/01-namespaces.yaml`).
 
 ```
                               https://localhost/
                                       │
                             ┌─────────▼─────────┐
-                            │   Istio Gateway   │  
+                            │  Traefik Gateway  │
                             └─────────┬─────────┘
                                       │
-   ══════════════════════════ namespace: demo ═════════════════════════════════
-   ║                                  │                                       ║
-   ║        ┌──────────┬──────────────┼──────────────┬──────────┐            ║
-   ║        ▼          ▼              ▼              ▼          ▼            ║
-   ║   [ web-ui ]  [ auth-svc ]  [ order-svc ]  [ payment-svc ]  [ dummy ]    ║
-   ║                                  │◄────────────►│                       ║
-   ║                                  │   start/settle (declared, both ways) ║
-   ║                                                  │                      ║
-   ║                                                  ▼                      ║
-   ║                                          [ mock-payment ]                ║
-   ║                                          no gateway ingress declared     ║
-   ║                                                                         ║
-   ║   every pod in demo can reach every other pod in demo — the             ║
-   ║   ingress/egress lists above are declared in values.yaml only           ║
-   ╚═══════════════════════════════════════════════════════════════════════╝
+   ═══ namespace: web ═══                ═══════════ namespace: api ═══════════
+   ║        │           ║                ║        │                          ║
+   ║        ▼           ║                ║   ┌────┼────────┬─────────┬─────┐ ║
+   ║   [ web-ui ]        ║                ║   ▼    ▼        ▼         ▼     ▼ ║
+   ║   ingress: gateway  ║                ║ [auth][order]◄►[payment][dummy]  ║
+   ║   egress: alloy     ║                ║              start/settle,      ║
+   ╚═════════════════════╝                ║              both ways          ║
+                                           ║                  │              ║
+                                           ║                  ▼              ║
+                                           ║           [ mock-payment ]      ║
+                                           ║           no gateway ingress    ║
+                                           ╚══════════════════════════════════╝
+              default-deny both directions on all six — every peer above is a
+              named service or namespace in the chart's networkPolicyPeers,
+              not an open namespace
                     │                                    │
-      (declared: auth,order,payment → mariadb/redis)   (declared: all 6 → alloy)
+      (auth,order,payment → mariadb/redis)        (all six → alloy)
                     │                                    │
-   ═══════ namespace: data — NetworkPolicy LIVE ═══   ═══ namespace: observability — LIVE ═══
-   ║                ▼                            ║   ║              ▼                      ║
-   ║   ingress from named pods only:              ║   ║   alloy  ingress: whole demo ns     ║
-   ║   [ mariadb :3306 ] ← auth, order, payment    ║   ║   grafana ingress: gateway only     ║
-   ║   [ redis   :6379 ] ← auth, order (not payment)║  ║   prometheus/loki/tempo: internal   ║
-   ║   egress: DNS only                            ║   ║   egress: DNS + each other's ports  ║
-   ╚═══════════════════════════════════════════════╝   ╚══════════════════════════════════════╝
+   ═══════ namespace: data ═══════════════════   ═══ namespace: observability ═══
+   ║                ▼                        ║   ║              ▼               ║
+   ║   ingress from named pods only:          ║   ║   alloy ingress: api ns     ║
+   ║   [ mariadb :3306 ] ← auth, order, payment║  ║   grafana ingress: gateway  ║
+   ║   [ redis :6379 ] ← auth, order (not payment)║ prometheus/loki/tempo: internal║
+   ║   egress: DNS only                        ║  ║   egress: DNS + each other  ║
+   ╚═══════════════════════════════════════════╝  ╚═══════════════════════════════╝
 ```
 
-This is intentionally temporary. Option 1 requires application changes to
-route backend calls through web-ui, while Option 2 requires no application
-rewrite. Given the assignment time constraint, I chose Option 2 for
-delivery. It should be replaced by Option 1 once the application
-architecture is ready.
+Every service chart under `charts/apps/` now sets `networkPolicy: true` — this
+replaces an earlier version of this project where the app tier had the peers
+declared in `values.yaml` but no enforcement, so every pod in one shared
+namespace could reach every other regardless of what was declared. That was
+wrong to leave standing once `data` and `observability` had real enforcement
+next to it.
+
+Run on 2026-08-13: `make up` applies all of it (`11-netpol-data.yaml` and
+`12-netpol-observability.yaml` are wired into the `data` and `observability`
+targets), `kubectl get netpol -A` showed policies in every namespace above,
+and the full 51-check suite — which exercises every allowed path in the
+diagram — passed with 0 pod restarts. That proves the allow rules are not
+blocking traffic that should get through. It does not prove the default-deny
+half of the claim: no suite here sends traffic down a path this policy should
+reject. `TODO.md` tracks the deny-path test as still open.
 
 In a cloud-native environment, the same principle applies at the network
 layer: separate public and private subnets appropriately, with Security
@@ -340,6 +372,7 @@ and keeping backend and data tiers private.
 | [notes/04 — canary rollout](notes/04-canary-rollout.md) | Argo Rollouts on order-svc, proven both directions |
 | [notes/05 — GitOps with Argo CD](notes/05-gitops-argocd.md) | auto-sync and selfHeal on the dummy service |
 | [notes/07 — observability](notes/07-observability.md) | LGTM pipeline, correlation, verification detail |
+| [notes/08 — Traefik + NetworkPolicy migration](notes/08-traefik-netpol-migration.md) | Istio → Traefik, `demo` → `web`/`api`, NetworkPolicy wired into `make up` |
 
 **Honest note:** due to the limited time available, this implementation
 focuses primarily on the core Kubernetes setup and functionality rather than

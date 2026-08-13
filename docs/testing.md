@@ -24,19 +24,28 @@ pods and takes minutes.
 
 ## What actually ran
 
-Verified against the live cluster on this machine — not assumed to pass.
+Run on 2026-08-13, against the current tree — Traefik gateway, `web`/`api`
+namespace split, `networkPolicy: true` on all six app charts. `make up`
+completed first: 3 kind nodes Ready, every release installed into the
+namespace its chart declares, every pod Running with 0 restarts.
 
 | Suite | Result | What it proved |
 |---|---|---|
-| `routing.sh` | 10/10 PASS | every path reaches its own service; `/api/nothing-here` → 404 |
-| `auth.sh` | 10/10 PASS | wrong password → 401, valid JWT → 200, junk token → 401 |
+| `routing.sh` | 10/10 PASS | every path reaches the service that owns it |
+| `tls-proof.sh` | 4/4 PASS | chain verifies against the system trust store with no `-k`; http leaked the marker password in plaintext, https carried none |
 | `checkout.sh` | 10/10 PASS | order placed, paid, and confirmed `paid` in the database |
-| `o11y-stack.sh` | 14/14 PASS | one trace spans payment-svc → order-svc → mock-payment; logs carry the trace id; metrics labelled by service; Grafana reachable |
-| `tls-proof.sh` | 4/4 PASS | http leaked the password (2 matches, as expected); https carried none; cert chain verified |
+| `resilience.sh` | 7/7 PASS | MariaDB pod deleted, came back with orders intact and the PVC still Bound |
+| `o11y-stack.sh` | 14/14 PASS | one trace spans payment-svc, order-svc and mock-payment with 5 database spans; 10 log lines across 3 services carry the trace id |
+| `o11y-journey.sh` | 6/6 PASS | `/grafana` returns 200, assets not double-prefixed |
 
-`o11y-journey.sh` and `resilience.sh` were not run in this pass —
-`resilience.sh` deletes pods on a live cluster and needs a deliberate
-go-ahead, not a side effect of writing docs.
+51 checks total, all passing. `kubectl -n traefik get gateway` showed
+`platform · CLASS traefik · ADDRESS localhost · PROGRAMMED True`;
+`kubectl get netpol -A` showed policies in `api` (5), `web` (1), `data` (3),
+`observability` (5), `argocd` (4).
+
+No suite here tries a **denied** path — every check above exercises traffic
+the NetworkPolicy allows. `tests/*netpol*` proving a blocked pod is actually
+blocked does not exist yet; see [TODO.md](../TODO.md) Deferred.
 
 ## Notes with more detail
 
@@ -45,3 +54,4 @@ go-ahead, not a side effect of writing docs.
 - [notes/04-canary-rollout.md](../notes/04-canary-rollout.md) — Argo Rollouts canary, proven both directions
 - [notes/05-gitops-argocd.md](../notes/05-gitops-argocd.md) — ArgoCD sync, self-heal, drift
 - [notes/07-observability.md](../notes/07-observability.md) — LGTM pipeline, correlation, verification detail
+- [notes/08-traefik-netpol-migration.md](../notes/08-traefik-netpol-migration.md) — Istio → Traefik, `demo` → `web`/`api`, NetworkPolicy wired into `make up`

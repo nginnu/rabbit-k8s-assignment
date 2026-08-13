@@ -14,10 +14,10 @@ its own leaves the old cluster in place.
 ## What `make up` does
 
 ```
-cluster ──→ gateway ──→ images ──→ observability ──→ apps ──→ verify
+cluster ──→ gateway ──→ images ──→ observability ──→ rollouts ──→ argocd ──→ apps ──→ verify
    │           │                        │
    │           └─ gateway-api CRDs      └─ prometheus, loki, tempo,
-   │              istio                    alloy, grafana
+   │              traefik                  alloy, grafana
    │              cert-manager + CA
    │              Gateway + routes
    │
@@ -46,7 +46,7 @@ Or one at a time:
 
 ## Two things to expect
 
-**The first run after `make down` is slow.** Istio, cert-manager, the Gateway
+**The first run after `make down` is slow.** Traefik, cert-manager, the Gateway
 API CRDs and five LGTM charts come over the network, every image is rebuilt, and
 the node image cache went away with the cluster.
 

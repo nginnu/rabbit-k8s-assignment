@@ -2,6 +2,9 @@
 
 **Date:** 2026-08-11
 **Status:** done — a customer can buy a shirt, `make test` proves it
+**Since:** `demo` namespace and the Istio gateway below are gone — replaced by
+`web`/`api` behind Traefik. Current layout: README `Current Assignment`,
+`platform/manifests/01-namespaces.yaml`.
 
 ---
 
