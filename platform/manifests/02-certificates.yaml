@@ -15,9 +15,11 @@ apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
   name: platform-tls
-  # Istio reads the certificate from a Secret in its own namespace, so it has to
-  # be issued into istio-system.
-  namespace: istio-system
+  # The Gateway reads its certificate from a Secret in its own namespace, and
+  # the Gateway now comes from the Traefik release — a Secret left in another
+  # namespace needs a ReferenceGrant beside it, or the listener resolves no
+  # certificate and :443 answers with Traefik's self-signed default.
+  namespace: traefik
 spec:
   secretName: platform-tls
   dnsNames:

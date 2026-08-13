@@ -6,10 +6,14 @@
 # apply objects for a namespace the other owns.
 #
 # A NetworkPolicy is one-sided. The charts give auth/order/payment egress to
-# mariadb and redis, but egress alone reaches nothing — until the matching
-# ingress exists here, turning `networkPolicy: true` on in charts/ drops every
-# query. That is why nothing is switched on yet, and why this file has to land
-# first.
+# mariadb and redis, but egress alone reaches nothing — the matching ingress is
+# here, so this file has to be applied before or with the release that sets
+# `networkPolicy: true`, never after. Applied after, every query is dropped for
+# as long as the gap lasts and it reads as a database outage.
+#
+# The namespace selected is api, not the old single application namespace. That
+# is what makes the proof cheap: web-ui runs in web, is named nowhere here, and
+# so cannot open 3306 no matter what its own chart allows in egress.
 #
 # Selectors here mirror charts/platform-service/templates/_networkpolicy.tpl.
 # The peer catalogue there selects mariadb and redis on
@@ -36,12 +40,12 @@ spec:
   ingress:
     # namespaceSelector and podSelector inside ONE list entry mean AND: these
     # pods in that namespace. Split across two entries they would mean OR —
-    # every pod in demo, plus every pod anywhere carrying that name. One dash
-    # is the whole difference.
+    # every pod in api, plus every pod anywhere carrying that name — including
+    # the ones in web. One dash is the whole difference.
     - from:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: demo
+              kubernetes.io/metadata.name: api
           podSelector:
             matchExpressions:
               - key: app.kubernetes.io/name
@@ -54,7 +58,7 @@ spec:
       ports:
         - protocol: TCP
           port: 3306
-    # The schema Job. It runs in this namespace, not demo, so the rule above
+    # The schema Job. It runs in this namespace, not api, so the rule above
     # does not cover it — and `make data` blocks on
     # `wait --for=condition=complete job/mariadb-init`. Without this rule that
     # wait runs to its 180s timeout on every fresh `make up` and the failure
@@ -147,7 +151,7 @@ spec:
     - from:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: demo
+              kubernetes.io/metadata.name: api
           podSelector:
             matchExpressions:
               - key: app.kubernetes.io/name

@@ -25,15 +25,22 @@ spec:
     - Ingress
     - Egress
   ingress:
-    # Every demo pod exports here. Selecting the whole namespace rather than
-    # naming six services is deliberate: the list would need editing on every
-    # new service, and a service that is missing from it loses telemetry
-    # without losing availability — the OTel SDK logs an export failure and
-    # keeps serving, so it is the harder failure to notice.
+    # Every application pod exports here, in both namespaces. Selecting whole
+    # namespaces rather than naming six services is deliberate: the list would
+    # need editing on every new service, and a service missing from it loses
+    # telemetry without losing availability — the OTel SDK logs an export
+    # failure and keeps serving, so it is the harder failure to notice.
+    #
+    # One namespaceSelector with In, not a namespaceSelector plus a podSelector
+    # beside it: inside a single `from` entry those two mean AND. Written that
+    # way the rule would demand a pod label that nothing here carries and every
+    # export would be dropped by a policy that still lists both namespaces.
     - from:
         - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: demo
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values: [web, api]
       ports:
         # gRPC only. platform-config sets OTEL_EXPORTER_OTLP_PROTOCOL=grpc and
         # the shared otel package uses the *grpc exporters, so 4318 is exposed
@@ -94,16 +101,20 @@ spec:
     - Ingress
     - Egress
   ingress:
-    # The gateway carries no app.kubernetes.io/name at all — only
-    # gateway.networking.k8s.io/gateway-name. This matches the `gateway` peer
-    # in _networkpolicy.tpl.
+    # Traefik, in its own namespace. There is no per-Gateway deployment under
+    # Traefik and nothing carries gateway.networking.k8s.io/gateway-name, so
+    # the istio-system rule this replaces matched no pod — Grafana would have
+    # answered https://localhost/grafana with a timeout the browser shows as
+    # 504, with a policy that reads as correct. Mirrors the `gateway` peer in
+    # charts/platform-service/templates/_networkpolicy.tpl; the two move
+    # together.
     - from:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: istio-system
+              kubernetes.io/metadata.name: traefik
           podSelector:
             matchLabels:
-              gateway.networking.k8s.io/gateway-name: platform
+              app.kubernetes.io/name: traefik
       ports:
         - protocol: TCP
           port: 3000
@@ -174,8 +185,8 @@ spec:
     # The Argo Rollouts controller, and it is not obvious. The Prometheus
     # metric provider runs the query in-process over HTTP from the controller
     # pod — there is no AnalysisRun pod, and none has ever appeared in this
-    # cluster. So the source is the argo-rollouts namespace, not demo, even
-    # though the AnalysisRun object lives in demo alongside order-svc.
+    # cluster. So the source is the argo-rollouts namespace, not api, even
+    # though the AnalysisRun object lives in api alongside order-svc.
     #
     # Leaving this out does not fail the canary: it scores as a provider Error,
     # and with consecutiveErrorLimit 2 the rollout aborts on a network drop

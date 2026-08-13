@@ -13,7 +13,11 @@ set -uo pipefail
 export PATH="/usr/local/bin:$PATH"
 
 BASE="${BASE:-https://localhost}"
-NS="${NS:-demo}"
+# One application namespace split into two: web-ui lives in `web`, the four Go
+# services plus dummy and platform-config live in `api`. One variable, not
+# two: no suite here runs kubectl against a web-ui pod directly, only through
+# BASE, so api is the only namespace anything below needs to name.
+API_NS="${API_NS:-api}"
 DATA_NS="${DATA_NS:-data}"
 CLUSTER="${CLUSTER:-rabbit-k8s-test}"
 
@@ -70,7 +74,7 @@ mysql_q() {
 # Fails early when the cluster is not up. Without this a whole file reports
 # failures that all mean "nothing is running".
 require_cluster() {
-  if ! kubectl -n "$NS" get pods >/dev/null 2>&1; then
+  if ! kubectl -n "$API_NS" get pods >/dev/null 2>&1; then
     echo "cluster $CLUSTER is not reachable — run 'make up' first"
     exit 1
   fi

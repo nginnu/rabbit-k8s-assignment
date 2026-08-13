@@ -1,0 +1,116 @@
+# Values for the traefik chart, sized for a local cluster.
+#
+# Traefik is the Gateway API implementation: it owns the GatewayClass, the
+# Gateway, and the pod that terminates 80/443. The Gateway is created by this
+# chart rather than by hand, so the controller and the object it programs are
+# installed and rolled back as one release.
+
+deployment:
+  # One replica on purpose. hostPort binds a port on the node, and only the
+  # control-plane node carries the kind port mappings — a second replica has
+  # nowhere to land and sits Pending forever, which reads as a broken install.
+  replicas: 1
+
+# kind maps host 80/443 onto the control-plane node only, and nothing else
+# schedules there because of its taint. Without both of these the pod lands on
+# a worker, the ports are bound on a node the host never reaches, and
+# https://localhost refuses the connection with the Gateway reporting healthy.
+nodeSelector:
+  ingress-ready: "true"
+tolerations:
+  - key: node-role.kubernetes.io/control-plane
+    operator: Exists
+    effect: NoSchedule
+
+providers:
+  kubernetesGateway:
+    # Off by default in this chart. Without it there is no GatewayClass, and
+    # every HTTPRoute stays unattached with no controller to say why.
+    enabled: true
+    statusAddress:
+      # The chart otherwise copies the address from its own Service, which on
+      # kind is a Service no load balancer will ever fill in — the Gateway
+      # would show an empty ADDRESS forever. The reachable address here is the
+      # host port on the ingress node, which is localhost.
+      hostname: localhost
+      service:
+        enabled: false
+  # Gateway API is the only routing mechanism here. Leaving the Ingress and
+  # IngressRoute providers on would let a stray Ingress claim a path that the
+  # HTTPRoutes already own, and the two would disagree with nothing logged.
+  kubernetesIngress:
+    enabled: false
+  kubernetesCRD:
+    enabled: false
+
+ingressClass:
+  # The chart otherwise creates an IngressClass marked as the cluster default,
+  # which quietly makes Traefik the owner of any Ingress anyone adds later.
+  enabled: false
+
+gateway:
+  enabled: true
+  # The routes already name `platform` as their parent; keeping the name means
+  # only the parentRef namespace moves in this migration.
+  name: platform
+  listeners:
+    # port here is the containerPort from `ports:` below, not the exposed port.
+    # Writing 80/443 makes the chart fail the render with "port is not declared
+    # in ports" rather than producing a listener that never binds.
+    web:
+      port: 8000
+      protocol: HTTP
+      # Routes live in web, api, observability and argocd — never here. The
+      # default is same-namespace only, which silently rejects every one of
+      # them and leaves the Gateway programmed with nothing behind it.
+      namespacePolicy:
+        from: All
+    # Commented out in the upstream values because it needs certificateRefs, so
+    # it has to be written in full — an HTTPS listener without a certificate
+    # fails the render instead of starting without TLS.
+    websecure:
+      port: 8443
+      protocol: HTTPS
+      namespacePolicy:
+        from: All
+      mode: Terminate
+      certificateRefs:
+        # Issued by cert-manager into this namespace in 02-certificates.yaml. A
+        # Secret in another namespace needs a ReferenceGrant beside it, so the
+        # Certificate moves with the Gateway rather than the other way round.
+        - name: platform-tls
+
+ports:
+  web:
+    # Port 80 stays open rather than redirecting, so the plaintext path is
+    # still there to compare against in tests/tls-proof.sh.
+    hostPort: 80
+  websecure:
+    hostPort: 443
+
+service:
+  spec:
+    # kind runs no cloud controller, so a LoadBalancer Service stays <pending>
+    # forever and looks like a failed install. Traffic arrives on the hostPorts
+    # above, not through this Service.
+    type: ClusterIP
+
+accessLog:
+  # The quickest way to see which route a request took — the same reason the
+  # Istio gateway logged to stdout. Alloy picks these up with every other pod log.
+  enabled: true
+
+global:
+  # A version check phones out to traefik.io on every start. `make up` has to
+  # work on a machine with no internet once the images are loaded.
+  checkNewVersion: false
+
+# Three Docker containers share this machine. Small, but the edge is on the
+# path of every request, so the limit has headroom over the request.
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi

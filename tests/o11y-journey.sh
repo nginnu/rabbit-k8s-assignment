@@ -126,8 +126,9 @@ for b in d.get('batches', []):
 print(' '.join(sorted(out)))" 2>/dev/null)
 
 # Payment calls orders to validate, the bank to charge, then orders again to
-# mark it paid. All three in one trace is the thing worth proving: Istio does
-# not propagate context for you — the application passes traceparent itself.
+# mark it paid. All three in one trace is the thing worth proving: no service
+# mesh sits on this path (that returns in a later stage), so nothing propagates
+# context for you — the application passes traceparent itself.
 missing=""
 for svc in payment-svc order-svc mock-payment; do
   case " $services " in

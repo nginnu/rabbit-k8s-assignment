@@ -1,6 +1,6 @@
 # order-svc
 
-namespace: demo
+namespace: api
 
 sharedConfig:
   name: app-config
@@ -29,7 +29,7 @@ services:
       # In-cluster address, not through the gateway: this is east-west traffic
       # and routing it out to the edge and back would add a hop and hide the
       # dependency from the mesh.
-      - { name: PAYMENT_SVC_URL, value: http://payment-svc.demo.svc.cluster.local }
+      - { name: PAYMENT_SVC_URL, value: http://payment-svc.api.svc.cluster.local }
       # Fraction of business requests answered with 500. 0 is off; raise it to
       # deploy a build that passes /healthz but serves errors, which is what a
       # canary has to catch and a crashing pod does not.
@@ -40,7 +40,7 @@ services:
     topologySpread: true
     pdb: { minAvailable: 1 }
 
-    networkPolicy: false
+    networkPolicy: true
     networkPolicyPeers:
       # payment-svc calls back here to settle an order, so it is a client as
       # well as a destination. Both halves of that cycle have to be written or

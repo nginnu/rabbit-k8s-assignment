@@ -10,7 +10,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: {{ .name }}
-  namespace: {{ $.Values.namespace | default "demo" }}
+  namespace: {{ include "platform-service.namespace" $ }}
   labels:
     app.kubernetes.io/part-of: platform
     app.kubernetes.io/managed-by: {{ $.Release.Service }}

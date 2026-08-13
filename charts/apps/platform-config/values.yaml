@@ -8,7 +8,10 @@
 # correct — a value they all read changed — but it is the reason to keep this
 # file small and put per-service settings in the service's own chart.
 
-namespace: demo
+# api. A ConfigMap is only mountable from its own namespace, and every service
+# that names app-config in sharedConfig lives here — web-ui declares none, so
+# nothing in web is left waiting on a ConfigMap that was never created there.
+namespace: api
 
 sharedConfig:
   name: app-config

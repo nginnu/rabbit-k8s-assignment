@@ -69,7 +69,7 @@ fi
 
 section "a stateless replica is deleted"
 # Two replicas and a PDB, so one going away should not be visible from outside.
-victim=$(kubectl -n "$NS" get pods -l app.kubernetes.io/name=order-svc \
+victim=$(kubectl -n "$API_NS" get pods -l app.kubernetes.io/name=order-svc \
   -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
 
 if [ -z "$victim" ]; then
@@ -77,7 +77,7 @@ if [ -z "$victim" ]; then
   summary
 fi
 
-kubectl -n "$NS" delete pod "$victim" --wait=false >/dev/null 2>&1
+kubectl -n "$API_NS" delete pod "$victim" --wait=false >/dev/null 2>&1
 note "deleted $victim"
 
 # Ask immediately and repeatedly: the other replica should answer throughout.
@@ -102,7 +102,7 @@ fi
 # does not otherwise take on.
 replicas=0
 for _ in $(seq 1 60); do
-  replicas=$(kubectl -n "$NS" get pods -l app.kubernetes.io/name=order-svc \
+  replicas=$(kubectl -n "$API_NS" get pods -l app.kubernetes.io/name=order-svc \
     -o jsonpath='{range .items[*]}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}' 2>/dev/null \
     | grep -c '^True')
   [ "$replicas" -eq 2 ] && break

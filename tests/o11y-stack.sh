@@ -123,8 +123,9 @@ for b in d.get('batches', []):
     out.add(at.get('service.name') or '?')
 print(' '.join(sorted(out)))" 2>/dev/null)
 
-# Istio does not propagate context for you — the application has to pass
-# traceparent itself. Three services in one trace is the evidence that it does.
+# No service mesh sits on this path — that returns in a later stage. Nothing
+# propagates trace context for the application, so it has to pass traceparent
+# itself. Three services in one trace is the evidence that it does.
 missing=""
 for svc in platform-local-payment-svc platform-local-order-svc platform-local-mock-payment; do
   case " $services " in

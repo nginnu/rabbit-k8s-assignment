@@ -1,6 +1,6 @@
 # payment-svc
 
-namespace: demo
+namespace: api
 
 sharedConfig:
   name: app-config
@@ -30,15 +30,15 @@ services:
       # source, not papered over by pretending the service is consistent.
       - { name: PORT, value: "9003" }
       - { name: APP_PORT, value: "9003" }
-      - { name: MOCK_PAYMENT_URL, value: http://mock-payment.demo.svc.cluster.local }
-      - { name: ORDER_SVC_URL, value: http://order-svc.demo.svc.cluster.local }
+      - { name: MOCK_PAYMENT_URL, value: http://mock-payment.api.svc.cluster.local }
+      - { name: ORDER_SVC_URL, value: http://order-svc.api.svc.cluster.local }
     envFromSecret:
       - mariadb-dsn
       - jwt-secret
     topologySpread: true
     pdb: { minAvailable: 1 }
 
-    networkPolicy: false
+    networkPolicy: true
     networkPolicyPeers:
       # The other half of the order-svc cycle: order-svc starts a payment, this
       # service calls back to settle it.

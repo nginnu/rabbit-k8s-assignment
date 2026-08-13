@@ -42,7 +42,11 @@ spec:
     # instead only works when a cluster Secret declares that name, and there is
     # none here.
     server: https://kubernetes.default.svc
-    namespace: demo
+    # Must agree with `namespace:` in charts/apps/dummy/values.yaml. The chart
+    # writes metadata.namespace on every object it renders, and an explicit
+    # namespace wins over the destination — set them apart and Argo CD syncs
+    # into api while reporting the Application as targeting somewhere else.
+    namespace: api
 
   syncPolicy:
     automated:
@@ -52,16 +56,19 @@ spec:
       # from git in the direction git cannot see.
       prune: true
       # On. A kubectl edit against dummy is reverted at the next reconcile,
-      # which is the property being demonstrated. It is safe here because
+      # which is the property being proved. It is safe here because
       # nothing else writes to these objects — dummy has no HPA and is not a
       # Rollout, so there is no second controller whose changes would be
       # fought.
       selfHeal: true
     syncOptions:
-      # demo already exists from 01-namespaces.yaml. Left unset Argo CD would
+      # api already exists from 01-namespaces.yaml. Left unset Argo CD would
       # not create it anyway; stated so that a fresh cluster fails on the
       # missing namespace rather than creating an unlabelled one that 01 then
-      # disagrees with.
+      # disagrees with — and an unlabelled namespace is not a cosmetic
+      # difference now: 11/12 select app traffic by
+      # kubernetes.io/metadata.name, which the API server sets, but the
+      # part-of label 01 carries is what marks it as ours.
       - CreateNamespace=false
       # Takes over the objects helm installed. They carry meta.helm.sh
       # annotations from the release created by `make apps`; without this the

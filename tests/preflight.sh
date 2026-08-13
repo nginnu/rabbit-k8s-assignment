@@ -7,9 +7,9 @@
 #
 # The other test files ask whether a feature works. This asks whether what is
 # running is what was declared. Those come apart, and when they do every symptom
-# points at the wrong layer: an Istio below its pin ignores fields it does not
-# understand, logs nothing, and leaves you debugging a Gateway that is correct
-# in git and wrong in the cluster.
+# points at the wrong layer: a Traefik below its pin ignores listener fields it
+# does not understand, logs nothing, and leaves you debugging a Gateway that is
+# correct in git and wrong in the cluster.
 #
 # The rule throughout: read the pin from the Makefile, read reality from the
 # cluster, print both. A check that says "ok" without showing what it compared
@@ -69,7 +69,13 @@ compare() {
 
 CLUSTER="${CLUSTER:-$(makevar CLUSTER)}"
 DATA_NS="${DATA_NS:-$(makevar DATA_NS)}"
+TRAEFIK_NS="${TRAEFIK_NS:-$(makevar TRAEFIK_NS)}"
 APP_VERSION="${VERSION:-$(makevar VERSION)}"
+# The application namespace split in two: web-ui lives in `web`; the four Go
+# services, dummy and platform-config live in `api`. Checks below that used to
+# read one namespace now loop over both — a chart moved into the wrong one
+# renders healthy and is only found by going looking for it.
+APP_NAMESPACES="web api"
 
 # ─── 0  tools and reachability ───────────────────────────────────────────────
 
@@ -114,29 +120,32 @@ for r in rs:
 " "$2" 2>/dev/null
 }
 
-istio_declared=$(makevar ISTIO_VERSION)
-compare "istiod" "$istio_declared" "$(helm_app_version istio-system istiod)" \
-  "below the pin, infrastructure.parametersRef on the Gateway is ignored with nothing logged"
-
-# base owns the CRDs istiod validates against, so they must move together.
-base_actual=$(helm_app_version istio-system istio-base)
-istio_actual=$(helm_app_version istio-system istiod)
-if [ -n "$base_actual" ] && [ -n "$istio_actual" ]; then
-  if [ "$base_actual" = "$istio_actual" ]; then
-    ok "istio-base matches istiod — $base_actual"
-  else
-    bad "istio-base is $base_actual but istiod is $istio_actual"
-  fi
-fi
+# Two pins, because they are two different strings: TRAEFIK_VERSION is the
+# chart and TRAEFIK_APP_VERSION is the proxy image tag. helm list reports the
+# chart's own declared appVersion, not what is actually running, so the image
+# tag is read from the cluster directly — the same split the Makefile's own
+# check-version.sh call makes at install time.
+traefik_chart_declared=$(makevar TRAEFIK_VERSION)
+traefik_chart_actual=$(helm list -n "$TRAEFIK_NS" -o json 2>/dev/null | python3 -c "
+import json,sys
+try: rs = json.load(sys.stdin)
+except Exception: rs = []
+for r in rs:
+    if r.get('name') == 'traefik':
+        print((r.get('chart') or '').rsplit('-', 1)[-1]); break
+" 2>/dev/null)
+compare "traefik chart" "$traefik_chart_declared" "$traefik_chart_actual" \
+  "below the pin, listener fields the Gateway needs are dropped with nothing logged"
 
 # The running image is checked separately from the Helm release: a release can
 # report one version while a cached image runs another.
-pilot_image=$($KUBECTL -n istio-system get deploy istiod \
+traefik_declared=$(makevar TRAEFIK_APP_VERSION)
+traefik_image=$($KUBECTL -n "$TRAEFIK_NS" get deploy traefik \
   -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null)
-if [ -n "$pilot_image" ]; then
-  compare "istiod image tag" "$istio_declared" "${pilot_image##*:}"
+if [ -n "$traefik_image" ]; then
+  compare "traefik image tag" "$traefik_declared" "${traefik_image##*:}"
 else
-  bad "istiod deployment not found in istio-system"
+  bad "traefik deployment not found in $TRAEFIK_NS"
 fi
 
 compare "cert-manager" "$(makevar CERT_MANAGER_VERSION)" "$(helm_app_version cert-manager cert-manager)"
@@ -148,24 +157,27 @@ compare "Gateway API CRDs" "$(makevar GATEWAY_API_VERSION)" "$gwapi_actual" \
 
 # ─── 2  the gateway is reachable from the host ───────────────────────────────
 #
-# Three pieces have to line up for :80 to reach Envoy, and each fails silently
-# on its own, so each is checked by itself.
+# Three pieces have to line up for :80 to reach Traefik, and each fails
+# silently on its own, so each is checked by itself.
 
-step "Gateway plumbing — host :80 to Envoy"
+step "Gateway plumbing — host :80 to Traefik"
 
-gw_pod_ports=$($KUBECTL -n istio-system get pod \
-  -l gateway.networking.k8s.io/gateway-name=platform \
+# Traefik is the controller and the data path in one pod: there is no
+# per-Gateway deployment, and nothing carries a gateway.networking.k8s.io
+# label — that label belongs to the Gateway object, not the pod that serves
+# it. The chart's own pod labels are the only handle here.
+gw_pod_ports=$($KUBECTL -n "$TRAEFIK_NS" get pod \
+  -l app.kubernetes.io/name=traefik \
   -o jsonpath='{.items[0].spec.containers[0].ports[*].hostPort}' 2>/dev/null)
 
 if printf '%s' "$gw_pod_ports" | grep -qw 80; then
-  ok "Envoy binds hostPort 80"
+  ok "Traefik binds hostPort 80"
 else
-  bad "Envoy has no hostPort 80 — the ConfigMap never reached the pod spec"
-  note "this is the visible symptom when istiod ignores parametersRef"
+  bad "Traefik has no hostPort 80 — the ports: block in values.yaml never reached the pod spec"
 fi
 
-gw_node=$($KUBECTL -n istio-system get pod \
-  -l gateway.networking.k8s.io/gateway-name=platform \
+gw_node=$($KUBECTL -n "$TRAEFIK_NS" get pod \
+  -l app.kubernetes.io/name=traefik \
   -o jsonpath='{.items[0].spec.nodeName}' 2>/dev/null)
 
 # Parsed from the kind config rather than hardcoded, so renaming a node cannot
@@ -186,13 +198,13 @@ mapped_node="${mapped_node:-control-plane}"
 
 if [ -n "$gw_node" ]; then
   case "$gw_node" in
-    *"$mapped_node"*) ok "Envoy runs on $gw_node — the node kind mapped :80 to" ;;
+    *"$mapped_node"*) ok "Traefik runs on $gw_node — the node kind mapped :80 to" ;;
     *)
-      bad "Envoy runs on $gw_node, but kind maps :80 to the $mapped_node node"
+      bad "Traefik runs on $gw_node, but kind maps :80 to the $mapped_node node"
       note "hostPort binds a port on a node nothing forwards to the host" ;;
   esac
 else
-  bad "no Envoy pod found for gateway/platform"
+  bad "no Traefik pod found in $TRAEFIK_NS"
 fi
 
 labelled=$($KUBECTL get nodes -l ingress-ready=true -o name 2>/dev/null | wc -l | tr -d ' ')
@@ -200,7 +212,7 @@ if [ "$labelled" = "1" ]; then
   ok "exactly one node carries ingress-ready=true"
 else
   bad "$labelled nodes carry ingress-ready=true — kind config declares 1"
-  note "with more than one, Envoy can schedule onto a node with no port mapping"
+  note "with more than one, Traefik can schedule onto a node with no port mapping"
 fi
 
 # ─── 3  routing objects accepted, not merely present ─────────────────────────
@@ -210,7 +222,7 @@ fi
 
 step "Gateway API objects"
 
-prog=$($KUBECTL -n istio-system get gateway platform \
+prog=$($KUBECTL -n "$TRAEFIK_NS" get gateway platform \
   -o jsonpath='{.status.conditions[?(@.type=="Programmed")].status}' 2>/dev/null)
 if [ "$prog" = "True" ]; then
   ok "gateway/platform is Programmed"
@@ -266,9 +278,13 @@ else
   bad "pods not ready:"$'\n'"$not_ready"
 fi
 
-mismatched=$($KUBECTL -n demo get deploy -o json 2>/dev/null | python3 -c "
+# web-ui and dummy/auth-svc/order-svc/payment-svc/mock-payment/platform-config
+# split across two namespaces now, so this loops rather than reading one.
+mismatched=""
+for ns in $APP_NAMESPACES; do
+  out=$($KUBECTL -n "$ns" get deploy -o json 2>/dev/null | python3 -c "
 import json,sys
-want = sys.argv[1]
+ns, want = sys.argv[1], sys.argv[2]
 try: d = json.load(sys.stdin)
 except Exception: sys.exit(0)
 for item in d.get('items', []):
@@ -278,8 +294,10 @@ for item in d.get('items', []):
             tag = img.rsplit(':', 1)[1]
             # Only locally built images carry VERSION; upstream ones have their own.
             if tag.startswith('v') and tag != want:
-                print(f\"      {item['metadata']['name']}  {tag}\")
-" "$APP_VERSION" 2>/dev/null)
+                print(f\"      {ns}/{item['metadata']['name']}  {tag}\")
+" "$ns" "$APP_VERSION" 2>/dev/null)
+  [ -n "$out" ] && mismatched="${mismatched}${out}"$'\n'
+done
 
 if [ -z "$mismatched" ]; then
   ok "app images match VERSION $APP_VERSION"
@@ -300,15 +318,20 @@ fi
 
 # A resource left behind by kubectl looks identical in kubectl get and is
 # invisible to helm — never upgraded, never rolled back, never deleted.
-unmanaged=$($KUBECTL -n demo get deploy,svc -o json 2>/dev/null | python3 -c "
+unmanaged=""
+for ns in $APP_NAMESPACES; do
+  out=$($KUBECTL -n "$ns" get deploy,svc -o json 2>/dev/null | python3 -c "
 import json,sys
+ns = sys.argv[1]
 try: items = json.load(sys.stdin).get('items', [])
 except Exception: sys.exit(0)
 for i in items:
     m = i['metadata']
     if m.get('labels', {}).get('app.kubernetes.io/managed-by') != 'Helm':
-        print(f\"      {i['kind']}/{m['name']}\")
-" 2>/dev/null)
+        print(f\"      {ns}/{i['kind']}/{m['name']}\")
+" "$ns" 2>/dev/null)
+  [ -n "$out" ] && unmanaged="${unmanaged}${out}"$'\n'
+done
 
 if [ -z "$unmanaged" ]; then
   ok "every app workload and Service is Helm-managed"
@@ -322,7 +345,9 @@ fi
 # failing check behind it.
 expected_releases=$(sed -nE 's/^APP_CHARTS[[:space:]]*:?=[[:space:]]*(.*)/\1/p' "$MAKEFILE" | head -1)
 
-release_status=$(helm list -n demo -o json 2>/dev/null | python3 -c "
+# -A rather than a single -n: web-ui's release lives in `web`, the rest in
+# `api`, and matching by name only does not need to know which is which.
+release_status=$(helm list -A -o json 2>/dev/null | python3 -c "
 import json,sys
 try: rs = json.load(sys.stdin)
 except Exception: rs = []
@@ -387,7 +412,7 @@ else
 fi
 
 for s in mariadb app-secrets; do
-  ns="$DATA_NS"; [ "$s" = "app-secrets" ] && ns=demo
+  ns="$DATA_NS"; [ "$s" = "app-secrets" ] && ns=api
   if $KUBECTL -n "$ns" get secret "$s" >/dev/null 2>&1; then
     ok "secret $ns/$s exists"
   else
@@ -446,7 +471,11 @@ fi
 
 step "TLS"
 
-cert_ready=$($KUBECTL -n istio-system get certificate platform-tls \
+# The Gateway now comes from the Traefik release, so the certificate it reads
+# has to live in the same namespace — a Secret left in a different one needs a
+# ReferenceGrant beside it, or the listener resolves no certificate and :443
+# falls back to Traefik's self-signed default.
+cert_ready=$($KUBECTL -n "$TRAEFIK_NS" get certificate platform-tls \
   -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)
 if [ "$cert_ready" = "True" ]; then
   ok "certificate platform-tls is issued"
@@ -455,12 +484,16 @@ else
   note "make tls installs cert-manager and seeds the CA"
 fi
 
-https_listener=$($KUBECTL -n istio-system get gateway platform \
-  -o jsonpath='{.status.listeners[?(@.name=="https")].conditions[?(@.type=="Programmed")].status}' 2>/dev/null)
+# websecure, not https: the Traefik chart names its listeners web/websecure,
+# not http/https. Asking for the old name returns an empty jsonpath match
+# rather than an error, and a check that reads empty as "not yet Programmed"
+# instead of "wrong listener name" sends you to the wrong fix.
+https_listener=$($KUBECTL -n "$TRAEFIK_NS" get gateway platform \
+  -o jsonpath='{.status.listeners[?(@.name=="websecure")].conditions[?(@.type=="Programmed")].status}' 2>/dev/null)
 if [ "$https_listener" = "True" ]; then
-  ok "gateway serves the https listener"
+  ok "gateway serves the websecure listener"
 else
-  bad "gateway https listener is not Programmed (${https_listener:-missing})"
+  bad "gateway websecure listener is not Programmed (${https_listener:-missing})"
 fi
 
 if [ -n "$SKIP_HTTP" ]; then
@@ -498,18 +531,13 @@ else
 
     # Separating "the app is broken" from "the host cannot reach it" is the
     # whole diagnosis, and asking from inside the node answers it in one line.
+    # No NodePort fallback below this: traefik/traefik is a ClusterIP Service,
+    # and traffic only ever arrives through the hostPort binding checked in
+    # section 2 — there is no second path left to try.
     inner=$(docker exec "${CLUSTER}-${mapped_node}" \
       curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://localhost:80/ 2>/dev/null)
     if [ "$inner" = "200" ]; then
       note "from inside the node it returns 200 — the app is fine, the host path is broken"
-    else
-      nodeport=$($KUBECTL -n istio-system get svc platform-istio \
-        -o jsonpath='{.spec.ports[?(@.port==80)].nodePort}' 2>/dev/null)
-      if [ -n "$nodeport" ]; then
-        np=$(docker exec "${CLUSTER}-${mapped_node}" \
-          curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://localhost:$nodeport/" 2>/dev/null)
-        [ "$np" = "200" ] && note "NodePort $nodeport answers 200 — Envoy works, only the :80 binding is missing"
-      fi
     fi
   fi
 fi

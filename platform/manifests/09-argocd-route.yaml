@@ -23,7 +23,7 @@ metadata:
 spec:
   parentRefs:
     - name: platform
-      namespace: istio-system
+      namespace: traefik
   rules:
     - matches:
         - path: { type: PathPrefix, value: /argocd }

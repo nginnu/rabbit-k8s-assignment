@@ -16,6 +16,22 @@ app.kubernetes.io/part-of: platform
 {{- end -}}
 
 {{/*
+The namespace every object in this release is written into.
+
+`required`, with no fallback. A default here is worse than a missing value:
+`helm upgrade --install <svc> charts/apps/<svc> -n api` does not correct a
+metadata.namespace the template already wrote, so a values file that forgets
+the key would install a complete, healthy-looking release into whichever
+namespace the default named — or into one that does not exist, which surfaces
+several targets later as objects nobody can find.
+
+Expected argument: the root context, `$`.
+*/}}
+{{- define "platform-service.namespace" -}}
+{{ required "namespace is required in charts/apps/<svc>/values.yaml — this chart names the namespace it installs into and has no default" .Values.namespace }}
+{{- end -}}
+
+{{/*
 Pod label selector — must match the labels above.
 */}}
 {{- define "platform-service.selectorLabels" -}}

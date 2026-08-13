@@ -9,7 +9,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: {{ $name }}
-  namespace: {{ $.Values.namespace | default "demo" }}
+  namespace: {{ include "platform-service.namespace" $ }}
   labels:
     {{- include "platform-service.labels" $lbls | nindent 4 }}
 spec:

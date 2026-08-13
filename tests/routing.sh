@@ -21,7 +21,7 @@ expect "https /                " 200 "$(status GET /)"
 section "each path reaches its own service"
 # 401 rather than 200: these need a token. It is still the right answer, and it
 # proves the request reached the service instead of stopping at the gateway —
-# a missing route gives 404 from Envoy, not 401 from the app.
+# a missing route gives 404 from Traefik, not 401 from the app.
 expect "/api/products          " 401 "$(status GET /api/products)"
 expect "/api/orders            " 401 "$(status GET /api/orders)"
 expect "/api/payments          " 401 "$(status POST /api/payments '{}')"

@@ -1,6 +1,6 @@
 # web-ui
 
-namespace: demo
+namespace: web
 
 # No sharedConfig and no sharedSecret. app-config carries backend concerns —
 # collector endpoint, Redis address — that a browser-facing frontend never
@@ -42,10 +42,14 @@ services:
     topologySpread: true
     pdb: { minAvailable: 1 }
 
-    networkPolicy: false
+    networkPolicy: true
     networkPolicyPeers:
+      # Cross-namespace, and unchanged by the web/api split: the gateway peer
+      # carries its own namespaceSelector for traefik.
       ingress: [gateway]
       # No backend egress: lib/api.ts runs in the browser, so the calls to
       # auth/order/payment leave the user's machine, not this pod. Option 1
-      # moves them server-side and this list grows to the three services.
+      # moves them server-side, and from web those become cross-namespace calls
+      # into api — svc:auth-svc would render a podSelector scoped to web and
+      # match nothing, so that change needs a new peer in the catalogue.
       egress: [alloy]

@@ -4,9 +4,10 @@ service: default-deny both directions, with the peers named in
 `networkPolicy.ingress` / `networkPolicy.egress` allowed back through.
 
 Peers are names, not selectors. Every tier this platform talks to labels itself
-differently — the Istio gateway carries no app.kubernetes.io/name at all, only
-gateway.networking.k8s.io/gateway-name — so a values file holding raw selectors
-would repeat four different label conventions in six charts. A wrong selector
+differently — the gateway is the Traefik controller pod in its own namespace,
+not anything named after the Gateway object the routes point at — so a values
+file holding raw selectors would repeat four different label conventions in six
+charts. A wrong selector
 does not fail: it renders a valid policy that matches no pod, and the traffic
 is dropped with nothing in the object to look at. The name is checked here
 instead, and an unknown one stops the render.
@@ -23,19 +24,30 @@ The peer catalogue. Each entry renders one `from`/`to` element plus its ports.
 
 Cross-namespace peers select on kubernetes.io/metadata.name, which the API
 server sets on every namespace and nobody can forget to apply — the hand-written
-labels in 01-namespaces.yaml are not on kube-system or istio-system.
+labels in 01-namespaces.yaml are not on kube-system, and the traefik namespace
+is created by helm --create-namespace, which labels nothing.
 */}}
 {{- define "platform-service.networkpolicy.peer" -}}
 {{- $peer := .peer -}}
 {{- $ns := .ns -}}
 {{- if eq $peer "gateway" }}
+{{/*
+  Traefik is the controller and the data path in one pod: there is no
+  per-Gateway deployment and nothing carries a gateway.networking.k8s.io label,
+  so a rule written against the Gateway object's name matches no pod and every
+  service answers the edge with a timeout that reads as 503 at the browser.
+
+  Selected on name alone, not app.kubernetes.io/instance: instance is
+  <release>-<namespace>, so naming it would couple this rule to the release
+  name in the Makefile. Nothing else runs in that namespace.
+*/}}
 - from_or_to:
   - namespaceSelector:
       matchLabels:
-        kubernetes.io/metadata.name: istio-system
+        kubernetes.io/metadata.name: traefik
     podSelector:
       matchLabels:
-        gateway.networking.k8s.io/gateway-name: platform
+        app.kubernetes.io/name: traefik
 {{- else if eq $peer "dns" }}
 - from_or_to:
   - namespaceSelector:
@@ -109,7 +121,7 @@ caller rewrites, so the peer catalogue is written once instead of twice.
 {{- define "platform-service.networkpolicy" -}}
 {{- range $name, $svc := .Values.services }}
 {{- if $svc.networkPolicy }}
-{{- $ns := $.Values.namespace | default "demo" }}
+{{- $ns := include "platform-service.namespace" $ }}
 {{- $np := $svc.networkPolicyPeers | default dict }}
 {{- $ingress := $np.ingress | default list }}
 {{/*

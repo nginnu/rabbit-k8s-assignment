@@ -18,7 +18,7 @@ apiVersion: argoproj.io/v1alpha1
 kind: AnalysisTemplate
 metadata:
   name: {{ $an.templateName | default (printf "%s-success-rate" $name) }}
-  namespace: {{ $.Values.namespace | default "demo" }}
+  namespace: {{ include "platform-service.namespace" $ }}
   labels:
     {{- include "platform-service.labels" (dict "svc" (set $svc "name" $name) "root" $) | nindent 4 }}
 spec:

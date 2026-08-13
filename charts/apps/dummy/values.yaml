@@ -7,7 +7,10 @@
 # at runtime. That is what makes it useful for testing canary rollback — a real
 # service cannot be told to start failing on demand.
 
-namespace: demo
+# api, not a namespace of its own: dummy is a backend smoke workload reached on
+# /dummy through the same gateway as the services, and a third namespace would
+# need its own copy of every cross-namespace allow rule to prove the same thing.
+namespace: api
 
 # dummy has no ConfigMap and no Secret on purpose. It should not depend on
 # anything else, or a failure here could mean the dependency is missing rather
@@ -43,7 +46,7 @@ services:
     topologySpread: true
     pdb: { minAvailable: 1 }
 
-    networkPolicy: false
+    networkPolicy: true
     networkPolicyPeers:
       ingress: [gateway]
       egress: [alloy]

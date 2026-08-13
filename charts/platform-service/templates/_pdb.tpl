@@ -10,7 +10,7 @@ apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: {{ $name }}
-  namespace: {{ $.Values.namespace | default "demo" }}
+  namespace: {{ include "platform-service.namespace" $ }}
 spec:
   {{- toYaml . | nindent 2 }}
   selector:

@@ -3,7 +3,11 @@
 # A service is one entry under `services.<name>`. The library loops over that
 # map, so adding a service means adding values, not editing a template.
 
-namespace: demo
+# Required, and deliberately left unset here. Every template reads it through
+# the `platform-service.namespace` helper, which fails the render when it is
+# missing — a default would let a chart that forgot the key install a healthy
+# release into the wrong namespace and be found only by going looking for it.
+namespace: ""
 
 sharedConfig: {}
 sharedSecret: {}
@@ -38,7 +42,7 @@ services: {}
 #                                 # only the peers named below
 #     networkPolicyPeers:         # names, not selectors — the template owns the
 #                                 # labels and ports each peer actually has
-#       ingress: [gateway]        #   gateway     the Istio Gateway pod
+#       ingress: [gateway]        #   gateway     the Traefik pod, traefik ns
 #       egress:  [mariadb, redis] #   mariadb     data ns, 3306
 #                                 #   redis       data ns, 6379
 #                                 #   alloy       observability ns, OTLP 4317
@@ -49,3 +53,8 @@ services: {}
 #     A pair of services that call each other needs both halves: egress on the
 #     caller and ingress on the callee. One direction alone leaves the caller
 #     looking correctly configured while the destination drops the packet.
+#
+#     svc:<name> renders a bare podSelector, which a NetworkPolicy scopes to the
+#     policy's own namespace. Naming a service that lives in a different one —
+#     web against api — matches no pod and drops the call with a policy that
+#     reads as correct. Those need a peer with a namespaceSelector instead.

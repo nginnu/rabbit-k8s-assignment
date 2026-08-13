@@ -5,15 +5,23 @@
 #
 # /api is stripped before forwarding, so backends keep the paths they serve and
 # the UI stays on one origin. The most specific prefix wins, so / must be last.
+#
+# The three routes now sit in two namespaces, which does not change that: the
+# spec ranks matches by the number of characters in the path first, and only
+# falls back to creation time and namespace/name when two matches tie. /api/auth
+# beats / wherever each route lives. A backendRef, though, is namespace-local —
+# each route has to be in the namespace of the Service it names or the ref needs
+# a ReferenceGrant beside it, and without one the route attaches and answers 500
+# with the Gateway still reporting Accepted.
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
   name: api
-  namespace: demo
+  namespace: api
 spec:
   parentRefs:
     - name: platform
-      namespace: istio-system
+      namespace: traefik
   rules:
     # /api/auth/login → auth-svc /auth/login
     - matches:
@@ -65,11 +73,11 @@ apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
   name: dummy
-  namespace: demo
+  namespace: api
 spec:
   parentRefs:
     - name: platform
-      namespace: istio-system
+      namespace: traefik
   rules:
     - matches:
         - path: { type: PathPrefix, value: /dummy }
@@ -83,11 +91,11 @@ apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
   name: web-ui
-  namespace: demo
+  namespace: web
 spec:
   parentRefs:
     - name: platform
-      namespace: istio-system
+      namespace: traefik
   rules:
     - matches:
         - path: { type: PathPrefix, value: / }

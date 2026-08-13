@@ -4,7 +4,7 @@
 # living beside the production services because its lifecycle is different: it
 # is torn down and replaced, never rolled out or canaried.
 
-namespace: demo
+namespace: api
 
 sharedConfig:
   name: app-config
@@ -41,7 +41,7 @@ services:
       - jwt-secret
     topologySpread: false
 
-    networkPolicy: false
+    networkPolicy: true
     networkPolicyPeers:
       # Not edge-facing: a gateway stand-in is only ever called from inside.
       ingress: [svc:payment-svc]

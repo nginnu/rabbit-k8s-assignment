@@ -12,7 +12,7 @@ apiVersion: {{ if eq $svc.workloadKind "Rollout" }}argoproj.io/v1alpha1{{ else }
 kind: {{ $svc.workloadKind | default "Deployment" }}
 metadata:
   name: {{ $name }}
-  namespace: {{ $.Values.namespace | default "demo" }}
+  namespace: {{ include "platform-service.namespace" $ }}
   labels:
     {{- include "platform-service.labels" $lbls | nindent 4 }}
 spec:

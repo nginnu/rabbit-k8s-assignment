@@ -27,7 +27,7 @@ namespaces: cluster
 
 GATEWAY_API_VERSION := v1.6.1
 
-## gateway-api: install Gateway API CRDs — must run before Istio
+## gateway-api: install Gateway API CRDs — must run before Traefik
 gateway-api: cluster
 	@kubectl apply --server-side --force-conflicts -f \
 		https://github.com/kubernetes-sigs/gateway-api/releases/download/$(GATEWAY_API_VERSION)/standard-install.yaml
@@ -35,32 +35,46 @@ gateway-api: cluster
 		crd/gateways.gateway.networking.k8s.io \
 		crd/httproutes.gateway.networking.k8s.io \
 		crd/gatewayclasses.gateway.networking.k8s.io
-	@# apply does not replace CRDs from an older bundle, and the fields Istio
-	@# needs are then dropped at admission while the YAML still looks right.
+	@# apply does not replace CRDs from an older bundle, and the listener fields
+	@# the Gateway needs are then dropped at admission while the YAML still looks
+	@# right. Traefik documents support for this bundle version.
 	@./platform/scripts/check-version.sh gateway-api $(GATEWAY_API_VERSION) \
 		"$$(kubectl get crd gateways.gateway.networking.k8s.io \
 			-o jsonpath='{.metadata.annotations.gateway\.networking\.k8s\.io/bundle-version}')"
 
-ISTIO_VERSION := 1.30.3
+TRAEFIK_NS := traefik
 
-## istio: install the control plane
-istio: gateway-api
-	@helm repo add istio https://istio-release.storage.googleapis.com/charts >/dev/null 2>&1 || true
-	@helm repo update istio >/dev/null
-	@helm upgrade --install istio-base istio/base -n istio-system --create-namespace \
-		--version $(ISTIO_VERSION) --wait
-	@helm upgrade --install istiod istio/istiod -n istio-system \
-		--version $(ISTIO_VERSION) -f platform/addons/istio/local/values.yaml --wait --timeout 5m
-	@# Older Istio ignores parametersRef on the Gateway and logs nothing: the
-	@# nodeSelector and hostPort go missing and :80 fails several targets later.
-	@./platform/scripts/check-version.sh istio $(ISTIO_VERSION) \
-		"$$(kubectl -n istio-system get deploy istiod \
+# Two different strings, and both are load-bearing. TRAEFIK_VERSION is the chart
+# and is what --version pins; TRAEFIK_APP_VERSION is the proxy image tag, and it
+# is the only one a running cluster reports back, so the drift check below
+# compares that. Bumping one without the other reinstalls the same proxy from a
+# chart that renders different fields, or the reverse.
+TRAEFIK_VERSION     := 41.2.0
+TRAEFIK_APP_VERSION := v3.7.10
+
+## traefik: install the controller that owns the Gateway
+traefik: gateway-api
+	@helm repo add traefik https://traefik.github.io/charts >/dev/null 2>&1 || true
+	@helm repo update traefik >/dev/null
+	@# No --set: providers, listeners and hostPorts all live in the values file.
+	@# A flag here would override it silently and the file would stop describing
+	@# what is actually running.
+	@helm upgrade --install traefik traefik/traefik -n $(TRAEFIK_NS) --create-namespace \
+		--version $(TRAEFIK_VERSION) -f platform/addons/traefik/local/values.yaml \
+		--wait --timeout 5m
+	@# A Traefik below the pin ignores listener fields it does not know and logs
+	@# nothing: the Gateway still reads correctly in git while :443 never binds,
+	@# and the failure surfaces as a connection refused several targets later.
+	@./platform/scripts/check-version.sh traefik $(TRAEFIK_APP_VERSION) \
+		"$$(kubectl -n $(TRAEFIK_NS) get deploy traefik \
 			-o jsonpath='{.spec.template.spec.containers[0].image}' | sed 's/.*://')"
 
 CERT_MANAGER_VERSION := v1.21.1
 
 ## tls: install cert-manager and load the local CA it issues from
-tls: istio
+# After traefik, not before: the Gateway reads its certificate from a Secret in
+# its own namespace, and that namespace is created by the Traefik release.
+tls: traefik
 	@helm repo add jetstack https://charts.jetstack.io >/dev/null 2>&1 || true
 	@helm repo update jetstack >/dev/null
 	@helm upgrade --install cert-manager jetstack/cert-manager -n cert-manager \
@@ -70,13 +84,15 @@ tls: istio
 	@# already in the system keychain, and nothing in the cluster can add one.
 	@./platform/scripts/seed-ca.sh
 	@kubectl apply -f $(MANIFESTS)/02-certificates.yaml
-	@kubectl -n istio-system wait --for=condition=Ready --timeout=120s \
+	@kubectl -n $(TRAEFIK_NS) wait --for=condition=Ready --timeout=120s \
 		certificate/platform-tls
 
-## gateway: create the Gateway and routes
+## gateway: attach the routes to the Gateway
 gateway: namespaces tls
-	@kubectl apply -f $(MANIFESTS)/03-gateway.yaml
-	@kubectl -n istio-system wait --for=condition=Programmed --timeout=180s gateway/platform
+	@# Nothing to apply first — the Gateway comes from the Traefik release. It is
+	@# created before the certificate exists, so the wait for Programmed belongs
+	@# here, after tls, not inside the traefik target.
+	@kubectl -n $(TRAEFIK_NS) wait --for=condition=Programmed --timeout=180s gateway/platform
 	@kubectl apply -f $(MANIFESTS)/04-routes.yaml
 
 DATA_NS := data
@@ -92,12 +108,26 @@ secrets: namespaces
 			--from-literal=password=$$(openssl rand -hex 16) \
 			--from-literal=root-password=$$(openssl rand -hex 16)
 
+# The frontend and the services are separate namespaces, because a
+# NetworkPolicy peer written as a bare podSelector only ever matches inside its
+# own namespace — together, "the storefront may not reach MariaDB" cannot be
+# said without naming pods. Both strings are also written in each chart's
+# values.yaml, which is where the rendered objects take their namespace from;
+# chart-namespace.sh reads them back out of there rather than mapping charts to
+# namespaces a second time here.
+WEB_NS := web
+API_NS := api
+APP_NS := $(WEB_NS) $(API_NS)
+
 ## app-secrets: build the app credentials from the database ones
 app-secrets: secrets
+	@# Only the Go services read this, and a Secret is namespaced: a second copy
+	@# in $(WEB_NS) would be a database password and a JWT signing key sitting
+	@# unread in the namespace that faces the browser.
 	@DBPASS=$$(kubectl -n $(DATA_NS) get secret mariadb -o jsonpath='{.data.password}' | base64 -d); \
 	DBUSER=$$(kubectl -n $(DATA_NS) get secret mariadb -o jsonpath='{.data.username}' | base64 -d); \
-	kubectl -n demo get secret app-secrets >/dev/null 2>&1 \
-		|| kubectl -n demo create secret generic app-secrets \
+	kubectl -n $(API_NS) get secret app-secrets >/dev/null 2>&1 \
+		|| kubectl -n $(API_NS) create secret generic app-secrets \
 			--from-literal=mariadb-dsn="$$DBUSER:$$DBPASS@tcp(mariadb.$(DATA_NS).svc.cluster.local:3306)/rabbitshop?parseTime=true" \
 			--from-literal=jwt-secret=$$(openssl rand -hex 32)
 
@@ -109,7 +139,13 @@ sql: namespaces
 
 ## data: bring up MariaDB and Redis
 data: secrets sql
-	@kubectl apply -f $(MANIFESTS)/05-mariadb.yaml -f $(MANIFESTS)/06-redis.yaml
+	@# The policies go on with the database, never after it. Every service chart
+	@# now sets networkPolicy: true, and a policy is one-sided: the egress the
+	@# charts grant reaches nothing until the matching ingress in 11 exists. Left
+	@# to a later target, every query out of $(API_NS) is dropped for the length
+	@# of the gap and reads as a database outage rather than a missing manifest.
+	@kubectl apply -f $(MANIFESTS)/05-mariadb.yaml -f $(MANIFESTS)/06-redis.yaml \
+		-f $(MANIFESTS)/11-netpol-data.yaml
 	@kubectl -n $(DATA_NS) rollout status statefulset/mariadb --timeout=180s
 	@kubectl -n $(DATA_NS) rollout status deployment/redis --timeout=120s
 	@# The schema Job runs separately from the database, so waiting on the
@@ -146,12 +182,19 @@ APP_DEPLOYS := auth-svc order-svc payment-svc mock-payment web-ui dummy
 
 ## apps: deploy the application services from their charts
 apps: data app-secrets
+	@# -n comes from the chart's own values.yaml, read back by the script. helm
+	@# keeps release metadata in the namespace of -n while the objects carry the
+	@# namespace the chart rendered them with, so a -n that disagrees with the
+	@# values file installs pods that run and a release `helm list -n $(API_NS)`
+	@# cannot see and `helm uninstall` will not remove.
 	@for c in $(APP_CHARTS); do \
+		ns=$$(./platform/scripts/chart-namespace.sh $$c) || exit 1; \
 		helm dependency update charts/apps/$$c >/dev/null; \
-		helm upgrade --install $$c charts/apps/$$c -n demo; \
+		helm upgrade --install $$c charts/apps/$$c -n $$ns; \
 	done
 	@for d in $(APP_DEPLOYS); do \
-		kubectl -n demo rollout status deployment/$$d --timeout=180s; \
+		ns=$$(./platform/scripts/chart-namespace.sh $$d) || exit 1; \
+		kubectl -n $$ns rollout status deployment/$$d --timeout=180s; \
 	done
 
 # Upstream charts. We own the values files and nothing else.
@@ -172,6 +215,12 @@ OBS_VALUES := platform/addons/observability/values
 ## observability: prometheus, loki, tempo, alloy and grafana
 observability: namespaces
 	@kubectl apply -f $(MANIFESTS)/07-observability.yaml
+	@# Before the components, not after: applied last, a rule that selects the
+	@# wrong label drops exports without failing anything — the OTel SDK logs the
+	@# failure and keeps serving, so the only symptom is empty dashboards. Applied
+	@# here, the same mistake shows up in the rollout waits at the end of this
+	@# target. The namespace has to exist first, which is what 07 creates.
+	@kubectl apply -f $(MANIFESTS)/12-netpol-observability.yaml
 	@helm repo add prometheus-community https://prometheus-community.github.io/helm-charts >/dev/null 2>&1 || true
 	@helm repo add grafana https://grafana.github.io/helm-charts >/dev/null 2>&1 || true
 	@helm repo update prometheus-community grafana >/dev/null
@@ -255,8 +304,12 @@ verify:
 	@echo "── nodes ─────────────────────────────────────────"
 	@kubectl get nodes -o custom-columns='NAME:.metadata.name,STATUS:.status.conditions[-1].type'
 	@echo "── workloads ─────────────────────────────────────"
-	@kubectl -n demo get pods \
-		-o custom-columns='POD:.metadata.name,NODE:.spec.nodeName,STATUS:.status.phase'
+	@# Both namespaces. Listing one shows a healthy half while the other
+	@# CrashLoops, and the storefront and the API fail independently now.
+	@for ns in $(APP_NS); do \
+		kubectl -n $$ns get pods \
+			-o custom-columns='NS:.metadata.namespace,POD:.metadata.name,NODE:.spec.nodeName,STATUS:.status.phase'; \
+	done
 	@echo "── from the browser ──────────────────────────────"
 	@# No -k on the https call. Passing without it means curl checked the chain
 	@# against the system trust store, which is the same thing a browser does
@@ -306,7 +359,7 @@ test-tls:
 down:
 	@kind delete cluster --name $(CLUSTER)
 
-.PHONY: help cluster namespaces gateway-api istio tls gateway secrets app-secrets \
+.PHONY: help cluster namespaces gateway-api traefik tls gateway secrets app-secrets \
         sql data images observability rollouts argocd apps up verify down \
         test test-routing test-auth test-checkout test-resilience test-tls \
         test-o11y test-journey
