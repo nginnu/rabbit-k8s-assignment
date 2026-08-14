@@ -89,7 +89,7 @@ export default function OrdersPage() {
   };
 
   return (
-    <div className="space-y-10">
+    <div className="mx-auto max-w-7xl space-y-10">
       {/* Hero */}
       <section className="glass p-6 md:p-8 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
