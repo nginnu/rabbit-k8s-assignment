@@ -5,6 +5,10 @@ metadata:
   # A backendRef in another namespace causes 500.
   namespace: traefik
 spec:
+  # Own host. The rule below matches at /, which on the shared localhost origin
+  # would swallow every storefront path the app routes own.
+  hostnames:
+    - traefik.localhost
   parentRefs:
     - name: platform
       namespace: traefik
@@ -13,7 +17,7 @@ spec:
       sectionName: websecure
   rules:
     - matches:
-        - path: { type: PathPrefix, value: /traefik }
+        - path: { type: PathPrefix, value: / }
       # Traefik answers only on /dashboard/. Without the rewrite the request
       # arrives under a name it does not know and returns 404.
       filters:
@@ -23,8 +27,9 @@ spec:
       backendRefs:
         - name: traefik
           port: 8080
-    # Stays at the root: the dashboard calls /api/overview and /api/http/routers
-    # as absolute paths. The app's longer prefixes prevent shadowing.
+    # Not rewritten: the dashboard calls /api/overview and /api/http/routers as
+    # absolute paths. A longer prefix outranks the / above, so these keep
+    # reaching the admin API instead of being rewritten under /dashboard.
     - matches:
         - path: { type: PathPrefix, value: /api }
       backendRefs:

@@ -9,12 +9,23 @@ interface TraceBadgeProps {
   sessionId?: string | null;
 }
 
-// Same-origin and relative, for the reason api.ts is: NEXT_PUBLIC_* is inlined
-// at build time, so an absolute URL bakes one environment's hostname into the
-// image and stops a digest from being promoted unchanged. Grafana is reached
-// through the same gateway as everything else, under /grafana (61-grafana-route
-// strips the prefix; GF_SERVER_ROOT_URL carries it into generated links).
-const GRAFANA_BASE = "/grafana";
+// Absolute and cross-origin, unlike api.ts's same-origin /api: Grafana no
+// longer shares the storefront's path prefix, it answers on its own host
+// (see platform/manifests/addons/observability/route.yaml) — a relative
+// /grafana here would resolve against the storefront's own origin and 404
+// instead of reaching Grafana.
+//
+// This doesn't reopen the problem api.ts avoids: that one is about
+// NEXT_PUBLIC_* env vars getting inlined at build time so an absolute URL
+// bakes one environment into the image and blocks promoting a digest
+// unchanged. Grafana was never on the storefront's own API surface that has
+// to travel with the image across environments the same way, so hardcoding
+// its host here doesn't couple the image to one.
+//
+// https, not http: grafana.localhost is a SAN on the mkcert-issued
+// platform-tls certificate, so a plain-http link here would drop the page
+// out of the trusted cert onto an untrusted one instead of staying https.
+const GRAFANA_BASE = "https://grafana.localhost";
 
 // Build Grafana Explore URL for Tempo TraceQL query
 function tempoUrl(query: string): string {

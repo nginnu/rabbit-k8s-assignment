@@ -1,8 +1,7 @@
 # grafana/grafana
 #
-# Served at /grafana through the gateway. Datasources are provisioned here so
-# the Tempo-to-Loki and Prometheus-to-Tempo links exist without anyone
-# configuring them by hand.
+# Datasources are provisioned here so the Tempo-to-Loki and Prometheus-to-Tempo
+# links exist without anyone configuring them by hand.
 
 replicas: 1
 
@@ -25,10 +24,11 @@ grafana.ini:
   auth:
     disable_login_form: true
   server:
-    # root_url carries the prefix so generated links are right from the
-    # browser's side. serve_from_sub_path stays false because the gateway
-    # already strips /grafana — with both on, links become /grafana/grafana.
-    root_url: http://localhost/grafana/
+    # root_url is what the browser gets in redirects and asset links; naming
+    # the wrong host sends a login redirect to the storefront. serve_from_sub_path
+    # stays false — there is no prefix on this host, and turning it on would make
+    # Grafana serve under a path the gateway never sends.
+    root_url: http://grafana.localhost/
     serve_from_sub_path: false
   analytics:
     reporting_enabled: false
