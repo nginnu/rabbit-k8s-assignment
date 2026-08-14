@@ -201,10 +201,33 @@ images:
 # One release per service, so one can be rolled back without its siblings.
 # platform-config first: a pod that mounts a ConfigMap which does not exist yet
 # stays Pending rather than failing loudly.
-APP_CHARTS := platform-config auth-svc order-svc payment-svc mock-payment web-ui dummy
+#
+# Helm-owned only. A chart that has moved to Argo CD is deleted from these two
+# lists in the same edit that adds it to GITOPS_CHARTS below — see there for
+# what breaks when it stays in both.
+APP_CHARTS := platform-config auth-svc order-svc payment-svc mock-payment web-ui
 
 # platform-config renders only a ConfigMap, so there is nothing to wait on.
-APP_DEPLOYS := auth-svc order-svc payment-svc mock-payment web-ui dummy
+APP_DEPLOYS := auth-svc order-svc payment-svc mock-payment web-ui
+
+# The charts that have graduated out of the helm loop above and belong to Argo
+# CD now. The migration is one service at a time, so this list grows and
+# APP_CHARTS shrinks by the same name; gitops-bootstrap loops it and needs no
+# new lines when the next one moves.
+#
+# A name left in both lists breaks the second `make up` and every one after it.
+# The Application syncs with ServerSideApply=true, which force-takes the fields
+# from helm's field manager; a plain `helm upgrade` does not force back, so it
+# dies on the fields Argo CD now owns:
+#
+#   Error: UPGRADE FAILED: conflict occurred while applying object api/dummy
+#   apps/v1, Kind=Deployment: Apply failed with 2 conflicts: conflicts with
+#   "argocd-controller": .spec.template.spec.containers[name="dummy"]
+#   .livenessProbe.initialDelaySeconds
+#
+# The first run passes — helm installs before the Application exists — so the
+# mistake surfaces one full run after it is made.
+GITOPS_CHARTS := dummy
 
 ## apps: deploy the application services from their charts
 apps: data app-secrets
@@ -316,11 +339,11 @@ argocd: namespaces
 	@kubectl apply -f $(MANIFESTS)/addons/argocd/namespace.yaml \
 		-f $(MANIFESTS)/addons/argocd/route.yaml
 
-## gitops-bootstrap: hand dummy to Argo CD — the first Application, applied by hand
-# After apps, never before, because this Application syncs automatically. Applied
-# first, Argo CD creates dummy's Deployment, Service, NetworkPolicy and PDB
-# itself, none of them carrying meta.helm.sh ownership, and the helm upgrade in
-# apps then refuses to adopt them:
+## gitops-bootstrap: hand the graduated charts to Argo CD, once each
+# After apps, never before, because these Applications sync automatically.
+# Applied first, Argo CD creates the Deployment, Service, NetworkPolicy and PDB
+# itself, none of them carrying meta.helm.sh ownership, and the helm install
+# below refuses to adopt them:
 #
 #   Error: unable to continue with install: NetworkPolicy "dummy" in namespace
 #   "api" exists and cannot be imported into the current release: invalid
@@ -332,7 +355,33 @@ argocd: namespaces
 # two already, and a prerequisite would re-run the whole helm loop in this
 # sub-make just to apply one file.
 gitops-bootstrap:
+	@# Once, per chart, guarded the same way cluster: and secrets: are. The
+	@# handoff is not repeatable: after the first sync the fields belong to
+	@# argocd-controller, and a second `helm upgrade` over them fails on the
+	@# conflict described at GITOPS_CHARTS. The Application existing is the
+	@# record that it already happened — the helm release alone is not, since it
+	@# survives the handoff and says nothing about who owns the objects now.
+	@for c in $(GITOPS_CHARTS); do \
+		if kubectl -n argocd get application $$c >/dev/null 2>&1; then \
+			echo "application $$c already handed to Argo CD — helm handoff skipped"; \
+			continue; \
+		fi; \
+		ns=$$(./platform/scripts/chart-namespace.sh $$c) || exit 1; \
+		helm dependency update charts/apps/$$c >/dev/null; \
+		helm upgrade --install $$c charts/apps/$$c -n $$ns; \
+		kubectl -n $$ns rollout status deployment/$$c --timeout=180s; \
+	done
 	@kubectl apply -f $(MANIFESTS)/addons/argocd/applications.yaml
+	@# A name in GITOPS_CHARTS that applications.yaml has no Application for
+	@# would keep reinstalling through the guard above on every run and look
+	@# exactly like a chart that graduated. Nothing else in the stack reports it,
+	@# and the drift is only found when someone edits git and waits for a sync
+	@# that never comes.
+	@for c in $(GITOPS_CHARTS); do \
+		kubectl -n argocd get application $$c >/dev/null 2>&1 || { \
+			echo "gitops-bootstrap: $$c is in GITOPS_CHARTS but applications.yaml declares no Application for it" >&2; \
+			exit 1; }; \
+	done
 
 ## up: cluster, gateway, traefik-dashboard, images, observability, rollouts, argocd, apps, gitops-bootstrap
 up: cluster gateway traefik-dashboard images
