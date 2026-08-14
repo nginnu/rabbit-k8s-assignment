@@ -1,0 +1,143 @@
+# Mesh features (CiliumEnvoyConfig, mutual auth) stay off this pass — Cilium on
+# the L7 path Traefik already owns leaves a broken request with two plausible
+# causes and no way to separate them. Plan: notes/09-service-mesh-plan.md.
+
+ipam:
+  # kind's kubeadm hands every node a podCIDR out of 10.244.0.0/16, but the
+  # chart default (`cluster-pool`) ignores it and allocates pod IPs from its
+  # own 10.0.0.0/8 — which contains kind's service CIDR, 10.96.0.0/12. Pods
+  # come up with addresses that collide with ClusterIPs and the failure looks
+  # like random Services being unreachable, not like an IPAM setting.
+  # ref: https://docs.cilium.io/en/stable/installation/kind/
+  mode: kubernetes
+
+# Flipped off by a chart upgrade, the API server still accepts every
+# NetworkPolicy and `kubectl get netpol` still lists them while nothing
+# enforces them — the only signal is a netpol test failing much later.
+k8sNetworkPolicy:
+  enabled: true
+
+# Traefik owns GatewayClass and Ingress here, permanently. A second controller
+# writes its own status onto every HTTPRoute and programs its own dataplane —
+# nothing logs the conflict and the request reaches whichever owns the hostPort.
+gatewayAPI:
+  enabled: false
+  gatewayClass:
+    # Default is `auto`: create the GatewayClass whenever the Gateway API CRDs
+    # are present — and they are, the Makefile installs v1.6.1 for Traefik. So
+    # `auto` here is effectively "yes" the moment anyone enables gatewayAPI for
+    # an unrelated reason.
+    create: false
+
+ingressController:
+  enabled: false
+  # A second switch, not a duplicate: `default` makes Cilium claim Ingress
+  # objects that name no class at all. Held off while the controller is off, so
+  # enabling the controller later cannot capture them in the same breath.
+  default: false
+
+# kube-proxy stays — pulling it in the same pass as the CNI swap leaves a broken
+# Service attributable to either change and provable against neither.
+# Quoted to match the chart's default literal: the configmap template calls
+# `fail` on anything that is not "true" or "false".
+kubeProxyReplacement: "false"
+
+# Removing kindnet took the portmap plugin with it, and hostPort then silently
+# does nothing — every pod Ready, Gateway programmed, `curl http://localhost/`
+# empty. portmap already ships in kind's node image, so nothing extra installs.
+# ref: https://docs.cilium.io/en/stable/installation/cni-chaining-portmap/
+#
+# Chaining does not apply to pods already running, so a `helm upgrade` against a
+# live cluster fixes nothing until they are recreated.
+cni:
+  chainingMode: portmap
+
+hubble:
+  # Flow visibility inside the agent, on by default. Kept because it is the
+  # only thing that can answer "which policy dropped this packet" — a
+  # NetworkPolicy denial is otherwise a timeout with no event anywhere.
+  enabled: true
+  relay:
+    # The agent above only ever holds the flows it observed on its own node, so
+    # without relay there are four unaggregated gRPC endpoints and no way to
+    # follow a request across nodes — and the UI, which talks to relay and
+    # nothing else, has no backend to read at all.
+    enabled: true
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        # Relay buffers flows in memory; tight limits mean OOMKill under a burst
+        # of policy drops, exactly when the flow history is worth having.
+        cpu: 500m
+        memory: 256Mi
+  ui:
+    # A NetworkPolicy denial produces no log, span or metric — only a timeout at
+    # the caller — so the LGTM stack cannot name the policy that dropped it.
+    # Exposed at hubble.localhost by platform/manifests/addons/cilium/route.yaml.
+    enabled: true
+    backend:
+      # Talks to relay and serves the UI's API; the work is proportional to the
+      # flows being streamed, not to browser tabs.
+      resources:
+        requests:
+          cpu: 25m
+          memory: 64Mi
+        limits:
+          cpu: 200m
+          memory: 128Mi
+    frontend:
+      # nginx serving static assets. Small on purpose — four kind nodes share
+      # one laptop, and this is the least important pod in the cluster.
+      resources:
+        requests:
+          cpu: 10m
+          memory: 32Mi
+        limits:
+          cpu: 100m
+          memory: 64Mi
+
+authentication:
+  # Deprecated in 1.20 and scheduled for removal in 1.21 (cilium/cilium#47132),
+  # so the mesh increment cannot be built on it — notes/09 still calls it beta.
+  enabled: false
+  mutual:
+    spire:
+      enabled: false
+
+envoy:
+  # Enabled and idle on purpose: it proxies nothing without a CiliumEnvoyConfig,
+  # and the later mesh increment then does not also reshape the dataplane.
+  enabled: true
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+# The chart ships no requests or limits for the agent at all. Every pod on a
+# node depends on this agent for an IP, so losing the CPU race to an
+# application pod stalls pod startup across that whole node. The memory limit
+# is deliberately loose rather than tight: an OOMKilled agent takes the node's
+# dataplane down with it, and a restart loop reads as a cluster-wide network
+# fault. Three kind nodes plus the control plane share one laptop, so the
+# requests stay small.
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+
+operator:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi

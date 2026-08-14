@@ -16,13 +16,56 @@ help:
 
 ## cluster: create the kind cluster
 cluster:
+	@# No --wait. The cluster config disables the default CNI, so no node can
+	@# reach Ready until cilium: runs — kind would sit out the whole timeout and
+	@# then print "WARNING: Timed out waiting for Ready" on every fresh create,
+	@# which reads like a broken cluster and is not one. Node readiness is waited
+	@# on in cilium:, by the target that actually delivers it.
 	@kind get clusters | grep -qx $(CLUSTER) \
 		&& echo "cluster $(CLUSTER) already exists" \
 		|| kind create cluster --name $(CLUSTER) \
-			--config platform/kind/cluster.yaml --wait 120s
+			--config platform/kind/cluster.yaml
+
+# Chart and agent image ship in lockstep — chart 1.20.0 carries appVersion
+# 1.20.0 — so unlike traefik there is one pin here, not two, and the drift check
+# below only adds the v the image tag prefixes.
+CILIUM_VERSION := 1.20.0
+
+## cilium: install the CNI — no pod schedules anywhere until this runs
+# A target wired to cluster: instead of cilium: skips the CNI, and its first pod
+# sits Pending with no event that names the missing network as the reason.
+cilium: cluster
+	@# oci:// rather than a repo add/update pair: there is no local repo cache to
+	@# go stale and resolve a chart older than the pin, which is the drift the
+	@# argocd check further down exists to catch.
+	@# No --set: ipam mode and the kind-specific bits belong in the values file,
+	@# and a flag here would override it silently.
+	@# No --create-namespace: kubeadm already made kube-system, and the flag
+	@# would turn a typo in -n into a new empty namespace instead of an error.
+	@# 10m, not the 5m used elsewhere: this is the one chart whose image is
+	@# pulled onto four nodes at once before anything can be ready.
+	@helm upgrade --install cilium oci://quay.io/cilium/charts/cilium \
+		-n kube-system --version $(CILIUM_VERSION) \
+		-f platform/addons/cilium/local/values.yaml \
+		--wait --timeout 10m
+	@# The rendered image carries a digest as well as a tag
+	@# (cilium:v1.20.0@sha256:...), so the tag has to be cut out from between
+	@# them: stripping to the last colon returns the sha256 hex and the check
+	@# fails against a version that was never wrong.
+	@./platform/scripts/check-version.sh cilium v$(CILIUM_VERSION) \
+		"$$(kubectl -n kube-system get daemonset cilium \
+			-o jsonpath='{.spec.template.spec.containers[?(@.name=="cilium-agent")].image}' \
+			| sed 's/@.*//; s/.*://')"
+	@# helm --wait proves the DaemonSet is ready, not that the kubelets picked
+	@# the CNI config up. Until every node is Ready the next target's pods stay
+	@# Pending, and the scheduler says only "0/4 nodes are available".
+	@kubectl wait --for=condition=Ready nodes --all --timeout=180s
 
 ## namespaces: create the namespaces everything else lands in
-namespaces: cluster
+# On cilium:, not cluster:. data, observability, rollouts, argocd and apps reach
+# the cluster through here and nowhere else, and without the edge `make apps`
+# hangs in rollout status with nothing naming the network.
+namespaces: cilium
 	@# Every namespace folder sits at depth 2 — apps/, addons/, local/ — so one
 	@# glob reaches all of them; a folder created one level off is not matched and
 	@# is skipped in silence, and the first target to apply into it fails on a
@@ -36,7 +79,9 @@ namespaces: cluster
 GATEWAY_API_VERSION := v1.6.1
 
 ## gateway-api: install Gateway API CRDs — must run before Traefik
-gateway-api: cluster
+# On cilium:, not cluster:. traefik -> tls -> gateway hangs off this edge, and
+# all three schedule pods and then block on --wait.
+gateway-api: cilium
 	@kubectl apply --server-side --force-conflicts -f \
 		https://github.com/kubernetes-sigs/gateway-api/releases/download/$(GATEWAY_API_VERSION)/standard-install.yaml
 	@kubectl wait --for=condition=established --timeout=60s \
@@ -117,6 +162,13 @@ gateway: namespaces tls
 # dependency on gateway alone covers both.
 traefik-dashboard: gateway
 	@kubectl apply -f $(MANIFESTS)/addons/traefik/route.yaml
+
+## hubble: expose the Hubble UI through the platform Gateway
+# After gateway, same reason as traefik-dashboard: a route applied before the
+# Gateway is Programmed has no controller to attach it and sits orphaned with
+# no error at the browser.
+hubble: gateway
+	@kubectl apply -f $(MANIFESTS)/addons/cilium/route.yaml
 
 DATA_NS := data
 
@@ -383,8 +435,10 @@ gitops-bootstrap:
 			exit 1; }; \
 	done
 
-## up: cluster, gateway, traefik-dashboard, images, observability, rollouts, argocd, apps, gitops-bootstrap
-up: cluster gateway traefik-dashboard images
+## up: cluster, cilium, gateway, traefik-dashboard, hubble, images, observability, rollouts, argocd, apps, gitops-bootstrap
+# cilium is named here as well as inherited, so the one target everyone reads
+# shows the CNI landing before anything that needs a schedulable node.
+up: cluster cilium gateway traefik-dashboard hubble images
 	@# Observability first only so the first requests are captured. The services
 	@# do not depend on it: the OTel SDK logs an export failure and carries on,
 	@# so a missing collector costs telemetry, not availability.
@@ -432,6 +486,10 @@ test:
 test-routing:
 	@./tests/routing.sh
 
+## test-mesh: cilium is the cni and a pod with no rule is refused the database
+test-mesh:
+	@./tests/mesh.sh
+
 ## test-auth: credentials are checked and the token opens the api
 test-auth:
 	@./tests/auth.sh
@@ -460,7 +518,7 @@ test-tls:
 down:
 	@kind delete cluster --name $(CLUSTER)
 
-.PHONY: help cluster namespaces gateway-api traefik tls gateway traefik-dashboard secrets app-secrets \
+.PHONY: help cluster cilium namespaces gateway-api traefik tls gateway traefik-dashboard hubble secrets app-secrets \
         sql data images observability rollouts argocd gitops-bootstrap apps up verify down \
-        test test-routing test-auth test-checkout test-resilience test-tls \
+        test test-routing test-mesh test-auth test-checkout test-resilience test-tls \
         test-o11y test-journey

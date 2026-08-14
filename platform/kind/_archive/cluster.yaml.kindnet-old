@@ -5,10 +5,7 @@ kind: Cluster
 # effect.
 
 networking:
-  # Cilium owns the CNI, and setting this back to false is not a revert: it
-  # breaks the *next* `kind create cluster` only, so a running cluster keeps
-  # working and nothing reports the change until someone rebuilds.
-  disableDefaultCNI: true
+  disableDefaultCNI: false
   kubeProxyMode: iptables
 
 # Multi-node because PodDisruptionBudget and topology spread mean nothing on
@@ -31,6 +28,7 @@ nodes:
         hostPort: 443
         protocol: TCP
 
+  - role: worker
   - role: worker
   - role: worker
   
