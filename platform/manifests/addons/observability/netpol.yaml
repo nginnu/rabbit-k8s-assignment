@@ -1,7 +1,7 @@
 # NetworkPolicy for the observability tier.
 #
-# Split from 11 because `make observability` and `make data` run at different
-# points and each applies its own namespace's objects.
+# Split from local/data/netpol.yaml because `make observability` and `make data`
+# run at different points and each applies its own namespace's objects.
 #
 # Selectors were read off the running pods, not assumed. The upstream charts
 # label differently from the hand-written data manifests: every component here

@@ -23,7 +23,15 @@ cluster:
 
 ## namespaces: create the namespaces everything else lands in
 namespaces: cluster
-	@kubectl apply -f $(MANIFESTS)/01-namespaces.yaml
+	@# Every namespace folder sits at depth 2 — apps/, addons/, local/ — so one
+	@# glob reaches all of them; a folder created one level off is not matched and
+	@# is skipped in silence, and the first target to apply into it fails on a
+	@# namespace that was never created. The loop stays because kubectl takes a
+	@# single path per -f: a bare `-f <glob>` hands it the first match and drops
+	@# the rest as positional junk.
+	@for f in $(MANIFESTS)/*/*/namespace.yaml; do \
+		kubectl apply -f $$f; \
+	done
 
 GATEWAY_API_VERSION := v1.6.1
 
@@ -83,7 +91,11 @@ tls: traefik
 	@# The CA has to come from mkcert on this machine: a browser only trusts a CA
 	@# already in the system keychain, and nothing in the cluster can add one.
 	@./platform/scripts/seed-ca.sh
-	@kubectl apply -f $(MANIFESTS)/02-certificates.yaml
+	@# Issuer before certificate: a Certificate naming an issuer that does not
+	@# exist yet stays not-ready, and the wait below burns its whole 120s before
+	@# anything says why.
+	@kubectl apply -f $(MANIFESTS)/cluster/clusterissuer.yaml
+	@kubectl apply -f $(MANIFESTS)/addons/traefik/certificate.yaml
 	@kubectl -n $(TRAEFIK_NS) wait --for=condition=Ready --timeout=120s \
 		certificate/platform-tls
 
@@ -93,7 +105,18 @@ gateway: namespaces tls
 	@# created before the certificate exists, so the wait for Programmed belongs
 	@# here, after tls, not inside the traefik target.
 	@kubectl -n $(TRAEFIK_NS) wait --for=condition=Programmed --timeout=180s gateway/platform
-	@kubectl apply -f $(MANIFESTS)/04-routes.yaml
+	@kubectl apply -f $(MANIFESTS)/apps/web -f $(MANIFESTS)/apps/api
+
+## traefik-dashboard: expose the Traefik dashboard through the platform Gateway
+# After gateway, not before. A route applied while the Gateway is not yet
+# Programmed has no controller to attach it and sits orphaned with no error at
+# the browser. And after traefik has re-run: the dashboard backend is
+# traefik:8080, and until the release is upgraded with the values that expose
+# that port the Service has no 8080, so the route attaches cleanly and answers
+# 500. gateway pulls traefik in transitively (gateway -> tls -> traefik), so the
+# dependency on gateway alone covers both.
+traefik-dashboard: gateway
+	@kubectl apply -f $(MANIFESTS)/addons/traefik/route.yaml
 
 DATA_NS := data
 
@@ -141,18 +164,21 @@ sql: namespaces
 data: secrets sql
 	@# The policies go on with the database, never after it. Every service chart
 	@# now sets networkPolicy: true, and a policy is one-sided: the egress the
-	@# charts grant reaches nothing until the matching ingress in 11 exists. Left
-	@# to a later target, every query out of $(API_NS) is dropped for the length
-	@# of the gap and reads as a database outage rather than a missing manifest.
-	@kubectl apply -f $(MANIFESTS)/05-mariadb.yaml -f $(MANIFESTS)/06-redis.yaml \
-		-f $(MANIFESTS)/11-netpol-data.yaml
+	@# charts grant reaches nothing until the matching ingress in netpol.yaml
+	@# exists. Left to a later target, every query out of $(API_NS) is dropped for
+	@# the length of the gap and reads as a database outage rather than a missing
+	@# manifest — applying the folder in one shot is what keeps them together.
+	@kubectl apply -f $(MANIFESTS)/local/data
 	@kubectl -n $(DATA_NS) rollout status statefulset/mariadb --timeout=180s
 	@kubectl -n $(DATA_NS) rollout status deployment/redis --timeout=120s
 	@# The schema Job runs separately from the database, so waiting on the
 	@# StatefulSet alone would let a service start against empty tables.
 	@kubectl -n $(DATA_NS) wait --for=condition=complete job/mariadb-init --timeout=180s
 
-# One image per service out of apps/services, selected by the SVC build arg.
+# Each name is both a cmd/ directory under apps/services (passed as the SVC
+# build arg) and the image tag its chart pins. A service left off this list
+# still passes check-image-tags.sh — that compares tags, not names — so nothing
+# is built or loaded and the pod sits in ErrImageNeverPull.
 GO_SVCS := auth-svc order-svc payment-svc mock-payment
 
 ## images: build every image and load it into the cluster
@@ -214,13 +240,14 @@ OBS_VALUES := platform/addons/observability/values
 
 ## observability: prometheus, loki, tempo, alloy and grafana
 observability: namespaces
-	@kubectl apply -f $(MANIFESTS)/07-observability.yaml
+	@kubectl apply -f $(MANIFESTS)/addons/observability/collector-service.yaml
 	@# Before the components, not after: applied last, a rule that selects the
 	@# wrong label drops exports without failing anything — the OTel SDK logs the
 	@# failure and keeps serving, so the only symptom is empty dashboards. Applied
 	@# here, the same mistake shows up in the rollout waits at the end of this
-	@# target. The namespace has to exist first, which is what 07 creates.
-	@kubectl apply -f $(MANIFESTS)/12-netpol-observability.yaml
+	@# target. The namespace has to exist first, which the namespaces target
+	@# creates — which is also why this target names files rather than the folder.
+	@kubectl apply -f $(MANIFESTS)/addons/observability/netpol.yaml
 	@helm repo add prometheus-community https://prometheus-community.github.io/helm-charts >/dev/null 2>&1 || true
 	@helm repo add grafana https://grafana.github.io/helm-charts >/dev/null 2>&1 || true
 	@helm repo update prometheus-community grafana >/dev/null
@@ -242,7 +269,7 @@ observability: namespaces
 	@kubectl -n observability rollout status deployment/alloy --timeout=180s
 	@kubectl -n observability rollout status deployment/grafana --timeout=180s
 	@kubectl -n observability rollout status statefulset/loki --timeout=180s
-	@kubectl apply -f $(MANIFESTS)/08-grafana-route.yaml
+	@kubectl apply -f $(MANIFESTS)/addons/observability/route.yaml
 
 ROLLOUTS_VERSION     := 2.41.1
 # The controller image tag, which is what a running cluster reports. The chart
@@ -282,10 +309,33 @@ argocd: namespaces
 	@./platform/scripts/check-version.sh argocd $(ARGOCD_APP_VERSION) \
 		"$$(kubectl -n argocd get deploy argocd-server \
 			-o jsonpath='{.spec.template.spec.containers[0].image}' | sed 's/.*://')"
-	@kubectl apply -f $(MANIFESTS)/09-argocd-route.yaml
+	@# Named files, not the folder — the second folder here that cannot go on in
+	@# one shot, for the same reason as addons/observability: one file in it
+	@# belongs to a later moment than the rest. applications.yaml is that file,
+	@# and gitops-bootstrap applies it after apps.
+	@kubectl apply -f $(MANIFESTS)/addons/argocd/namespace.yaml \
+		-f $(MANIFESTS)/addons/argocd/route.yaml
 
-## up: cluster, gateway, images, observability, rollouts, argocd, apps
-up: cluster gateway images
+## gitops-bootstrap: hand dummy to Argo CD — the first Application, applied by hand
+# After apps, never before, because this Application syncs automatically. Applied
+# first, Argo CD creates dummy's Deployment, Service, NetworkPolicy and PDB
+# itself, none of them carrying meta.helm.sh ownership, and the helm upgrade in
+# apps then refuses to adopt them:
+#
+#   Error: unable to continue with install: NetworkPolicy "dummy" in namespace
+#   "api" exists and cannot be imported into the current release: invalid
+#   ownership metadata; label validation error: missing key
+#   "app.kubernetes.io/managed-by": must be set to "Helm"
+#
+# Only one direction works: helm creates the release, then ServerSideApply=true
+# lets Argo CD take the objects over. No prerequisite on apps — up sequences the
+# two already, and a prerequisite would re-run the whole helm loop in this
+# sub-make just to apply one file.
+gitops-bootstrap:
+	@kubectl apply -f $(MANIFESTS)/addons/argocd/applications.yaml
+
+## up: cluster, gateway, traefik-dashboard, images, observability, rollouts, argocd, apps, gitops-bootstrap
+up: cluster gateway traefik-dashboard images
 	@# Observability first only so the first requests are captured. The services
 	@# do not depend on it: the OTel SDK logs an export failure and carries on,
 	@# so a missing collector costs telemetry, not availability.
@@ -293,10 +343,12 @@ up: cluster gateway images
 	@# Before apps, not after: once a service is a Rollout, its chart fails to
 	@# render against a cluster where the CRD is not registered yet.
 	@$(MAKE) --no-print-directory rollouts
-	@# Before apps: once apps are handed to Argo CD it has to already be running
-	@# to deploy them, and the ordering should not have to change then.
+	@# The control plane before apps: once apps are handed to Argo CD it has to
+	@# already be running to deploy them. The Applications themselves come after
+	@# apps — see gitops-bootstrap.
 	@$(MAKE) --no-print-directory argocd
 	@$(MAKE) --no-print-directory apps
+	@$(MAKE) --no-print-directory gitops-bootstrap
 	@$(MAKE) --no-print-directory verify
 
 ## verify: prove the stack is actually working, not merely present
@@ -359,7 +411,7 @@ test-tls:
 down:
 	@kind delete cluster --name $(CLUSTER)
 
-.PHONY: help cluster namespaces gateway-api traefik tls gateway secrets app-secrets \
-        sql data images observability rollouts argocd apps up verify down \
+.PHONY: help cluster namespaces gateway-api traefik tls gateway traefik-dashboard secrets app-secrets \
+        sql data images observability rollouts argocd gitops-bootstrap apps up verify down \
         test test-routing test-auth test-checkout test-resilience test-tls \
         test-o11y test-journey

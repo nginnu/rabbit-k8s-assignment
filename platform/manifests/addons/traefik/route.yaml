@@ -1,0 +1,32 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: traefik-dashboard
+  # A backendRef in another namespace causes 500.
+  namespace: traefik
+spec:
+  parentRefs:
+    - name: platform
+      namespace: traefik
+      # Without this the route also attaches to `web` and the dashboard is
+      # served in plaintext on :80.
+      sectionName: websecure
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: /traefik }
+      # Traefik answers only on /dashboard/. Without the rewrite the request
+      # arrives under a name it does not know and returns 404.
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path: { type: ReplacePrefixMatch, replacePrefixMatch: /dashboard }
+      backendRefs:
+        - name: traefik
+          port: 8080
+    # Stays at the root: the dashboard calls /api/overview and /api/http/routers
+    # as absolute paths. The app's longer prefixes prevent shadowing.
+    - matches:
+        - path: { type: PathPrefix, value: /api }
+      backendRefs:
+        - name: traefik
+          port: 8080

@@ -1,15 +1,14 @@
-# Values for the traefik chart, sized for a local cluster.
-#
-# Traefik is the Gateway API implementation: it owns the GatewayClass, the
-# Gateway, and the pod that terminates 80/443. The Gateway is created by this
-# chart rather than by hand, so the controller and the object it programs are
-# installed and rolled back as one release.
-
 deployment:
   # One replica on purpose. hostPort binds a port on the node, and only the
   # control-plane node carries the kind port mappings — a second replica has
   # nowhere to land and sits Pending forever, which reads as a broken install.
   replicas: 1
+
+# Recreate, not RollingUpdate: only control-plane node has hostPort mappings.
+# RollingUpdate starts new pod before killing old one; old pod blocks ports so
+# new pod sits Pending. Recreate frees ports first, costs brief downtime.
+updateStrategy:
+  type: Recreate
 
 # kind maps host 80/443 onto the control-plane node only, and nothing else
 # schedules there because of its taint. Without both of these the pod lands on
@@ -48,6 +47,13 @@ ingressClass:
   # which quietly makes Traefik the owner of any Ingress anyone adds later.
   enabled: false
 
+# Without insecure: true, api@internal attaches to no entrypoint; :8080 answers
+# 404. Gateway API backendRef cannot name api@internal, only a Service.
+# insecure: true makes dashboard available at :8080 for the HTTPRoute.
+api:
+  dashboard: true
+  insecure: true
+
 gateway:
   enabled: true
   # The routes already name `platform` as their parent; keeping the name means
@@ -75,8 +81,9 @@ gateway:
         from: All
       mode: Terminate
       certificateRefs:
-        # Issued by cert-manager into this namespace in 02-certificates.yaml. A
-        # Secret in another namespace needs a ReferenceGrant beside it, so the
+        # Issued by cert-manager into this namespace in
+        # platform/manifests/addons/traefik/certificate.yaml. A Secret in
+        # another namespace needs a ReferenceGrant beside it, so the
         # Certificate moves with the Gateway rather than the other way round.
         - name: platform-tls
 
@@ -87,6 +94,11 @@ ports:
     hostPort: 80
   websecure:
     hostPort: 443
+  traefik:
+    # Without expose.default the Service lacks :8080, so HTTPRoute backendRef
+    # `traefik:8080` causes 500 (same trap as missing ReferenceGrant).
+    expose:
+      default: true
 
 service:
   spec:
@@ -96,8 +108,11 @@ service:
     type: ClusterIP
 
 accessLog:
-  # The quickest way to see which route a request took — the same reason the
-  # Istio gateway logged to stdout. Alloy picks these up with every other pod log.
+  # Off by default in this chart. Without it a request that reached the wrong
+  # backend leaves no trace at the edge — the Gateway still reports Programmed
+  # and which router matched has to be inferred from the backend's own logs, or
+  # from nothing at all when no backend was reached. Alloy ships these with
+  # every other pod log.
   enabled: true
 
 global:

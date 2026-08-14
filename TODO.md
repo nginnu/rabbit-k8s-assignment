@@ -3,15 +3,17 @@
 Each stage works on its own before the next one starts.
 Acceptance criteria in [docs/goals.md](docs/goals.md).
 
-## 1. Foundation ✅
+## 1. Foundation ⚠️ needs re-verification
 
 - [x] kind cluster, three nodes, host ports 80/443
 - [x] Helm library chart — one template, values per service
 - [x] one workload deployed and reachable through its Service
-- [x] `make up` runs end to end — observed 2026-08-13 on a fresh cluster: 3
-  nodes Ready, all releases installed (Traefik gateway, `web`/`api` split,
-  `networkPolicy: true` on all six app charts), every pod Running with 0
-  restarts
+- [ ] `make up` runs end to end — ran clean on 2026-08-13, before
+  `platform/manifests/` moved from the flat numbered layout to per-namespace
+  folders and `gitops-bootstrap` was added as a new stage in `up`. That run no
+  longer describes the current tree. As of 2026-08-14 `make up` is failing
+  partway through on this tree and no run against the new layout has been
+  observed passing — see Known issues
 
 ## 2. Data layer ✅
 
@@ -89,8 +91,8 @@ Section 6 does not depend on this one.
   under ArgoCD management
 - NetworkPolicy deny-path proof — enablement itself is no longer deferred:
   all six app charts set `networkPolicy: true` (`web`/`api`, replacing the old
-  shared `demo` namespace), and `11-netpol-data.yaml` / `12-netpol-
-  observability.yaml` are applied by `make up` (from the `data` and
+  shared `demo` namespace), and `local/data/netpol.yaml` / `addons/
+  observability/netpol.yaml` are applied by `make up` (from the `data` and
   `observability` targets respectively, not a manual step). `make up` on
   2026-08-13 exercised every *allowed* path across all 51 suite checks with 0
   pod restarts — proof the allow rules do not block traffic that should pass.
@@ -100,7 +102,7 @@ Section 6 does not depend on this one.
 
 ## Known issues (senior-devops)
 
-- `Makefile:197` waits on `kubectl rollout status deployment/$$d` for every
+- `Makefile:223` waits on `kubectl rollout status deployment/$$d` for every
   name in `APP_DEPLOYS`, but `order-svc` renders as a `Rollout`
   (`workloadKind: Rollout` in `charts/apps/order-svc/values.yaml`), not a
   `Deployment`. `make up` prints `Error from server (NotFound): deployments.apps

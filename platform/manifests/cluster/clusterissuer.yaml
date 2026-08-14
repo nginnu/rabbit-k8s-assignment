@@ -1,0 +1,11 @@
+# TLS for the gateway. The Issuer says who signs, the Certificate says what to
+# sign; only the Issuer changes on a real domain (ca -> acme).
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: mkcert-ca
+spec:
+  ca:
+    # Written by `make tls` from `mkcert -CAROOT`. The private key stays on this
+    # machine and in the Secret; it is never committed.
+    secretName: mkcert-ca

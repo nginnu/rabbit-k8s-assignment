@@ -1,0 +1,9 @@
+# `helm --create-namespace` creates this namespace too when Argo CD is
+# installed. It only creates it if missing and does not own it, so whichever of
+# the two runs first wins and neither conflicts.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: argocd
+  labels:
+    app.kubernetes.io/part-of: platform

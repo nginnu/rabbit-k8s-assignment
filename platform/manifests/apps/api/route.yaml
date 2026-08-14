@@ -84,21 +84,3 @@ spec:
       backendRefs:
         - name: dummy
           port: 80
----
-# Everything else is the UI. A separate route so a frontend canary can shift
-# weights without touching backend routing.
-apiVersion: gateway.networking.k8s.io/v1
-kind: HTTPRoute
-metadata:
-  name: web-ui
-  namespace: web
-spec:
-  parentRefs:
-    - name: platform
-      namespace: traefik
-  rules:
-    - matches:
-        - path: { type: PathPrefix, value: / }
-      backendRefs:
-        - name: web-ui
-          port: 80

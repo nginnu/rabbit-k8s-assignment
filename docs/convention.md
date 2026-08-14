@@ -25,7 +25,7 @@ because a NetworkPolicy `podSelector` only ever matches inside its own
 namespace — with the frontend and the services together, "the storefront may
 not reach MariaDB" cannot be written without naming pods one by one; apart, it
 is the default. See the comment block in
-[`01-namespaces.yaml`](../platform/manifests/01-namespaces.yaml).
+[`apps/web/namespace.yaml`](../platform/manifests/apps/web/namespace.yaml).
 
 Upstream, for when a split looks tempting and isn't earning its keep:
 
@@ -53,25 +53,47 @@ Upstream, for when a split looks tempting and isn't earning its keep:
 | Namespace delete | Loud, but blast radius is everything inside | Deleting `data` takes MariaDB and Redis with it |
 | Sidecar/injection labels | Per-namespace, silent if forgotten | Pod runs unmeshed with no error |
 
-### How namespaces get created here — three ways, not one
+### How namespaces get created here — two ways, not one
+
+Every namespace folder (`apps/*/`, `addons/*/`, `local/*/`) carries its own
+`namespace.yaml`. The `namespaces` target applies all of them with one glob,
+`platform/manifests/*/*/namespace.yaml`, before anything that needs one runs —
+see [`platform/manifests/README.md`](../platform/manifests/README.md) for the
+folder layout.
 
 | Namespace | Created by | Why not the other way |
 |---|---|---|
-| `web`, `api`, `data` | [`01-namespaces.yaml`](../platform/manifests/01-namespaces.yaml), first manifest applied | Nothing else needs to exist before these do |
-| `observability`, `argocd` | Declared inline in the feature manifest that needs it (`07-observability.yaml`, `09-argocd-route.yaml`) | `01` runs long before Argo CD or the observability stack is installed; the route has to land in a namespace that doesn't exist yet at `01` time |
+| `web`, `api`, `data`, `observability`, `argocd` | `namespace.yaml` in the matching folder, applied by the `namespaces` target | One glob reaches all of them; nothing else needs to exist first |
 | `traefik`, `cert-manager`, `argo-rollouts` | `helm --create-namespace` | The chart is the only thing that ever needs the namespace to exist, so there's no reason to declare it earlier and have it sit empty |
 
 `argocd` is a case where two of these overlap: it's declared in
-`09-argocd-route.yaml` *and* `helm --create-namespace` creates it too.
-`--create-namespace` only creates if missing and does not own it, so whichever
-runs first wins and neither conflicts — see the comment in
-[`09-argocd-route.yaml`](../platform/manifests/09-argocd-route.yaml).
+`addons/argocd/namespace.yaml` *and* `helm --create-namespace` creates it too
+inside the `argocd` target. `--create-namespace` only creates if missing and
+does not own it, so whichever runs first wins and neither conflicts — see the
+comment in
+[`addons/argocd/namespace.yaml`](../platform/manifests/addons/argocd/namespace.yaml).
 
 The label `app.kubernetes.io/part-of: platform` on the hand-written
 namespaces is **not** load-bearing. NetworkPolicy selects on
 `kubernetes.io/metadata.name`, which the API server sets on every namespace —
 including `traefik`, which `helm --create-namespace` creates with no labels
 at all. See [`_networkpolicy.tpl`](../charts/platform-service/templates/_networkpolicy.tpl).
+
+### Manifest layout follows the namespace, not apply order
+
+One folder under `platform/manifests/` is one namespace and one delete unit —
+`kubectl delete ns <name>` removes everything that folder put there. Every
+namespace folder sits at depth 2 (`apps/<name>/`, `addons/<name>/`,
+`local/<name>/`) so the `namespaces` target reaches all of them with one glob,
+`*/*/namespace.yaml`, instead of a number encoding an order the Makefile
+already owns. Full folder table and which target applies each one:
+[`platform/manifests/README.md`](../platform/manifests/README.md).
+
+The earlier numbered layout (`01-namespaces.yaml` … `13-…`) put apply order in
+the filename as well as the Makefile, and the two drifted: `13` ran fourth,
+the data files ran last, and `10-argocd-apps.yaml` was applied by nothing at
+all. The folder layout removes the second copy of the order rather than
+fixing the numbering.
 
 ---
 
@@ -104,8 +126,9 @@ at all. See [`_networkpolicy.tpl`](../charts/platform-service/templates/_network
 Gateway API is the portable layer; the controller underneath is swappable —
 proved by replacing Istio with Traefik without changing a single route's URL.
 The old Istio Gateway is kept at
-[`03-gateway.yaml.istio-old`](../platform/manifests/03-gateway.yaml.istio-old)
-for the comparison; it is not applied.
+[`_archive/gateway.istio-old.yaml`](../platform/manifests/_archive/gateway.istio-old.yaml)
+for the comparison; no Makefile target names `_archive/`, and none of the
+`kubectl apply -f <folder>` targets recurse into it, so it is never applied.
 
 ### Three port layers, and why they don't collapse to one
 
@@ -125,12 +148,12 @@ comment in the values file.
 A Gateway resolves `certificateRefs` from its own namespace only, unless a
 `ReferenceGrant` exists for the cross-namespace case. That's why
 `platform-tls` is issued into `traefik`, not into a namespace of its own —
-see [`02-certificates.yaml`](../platform/manifests/02-certificates.yaml).
+see [`addons/traefik/certificate.yaml`](../platform/manifests/addons/traefik/certificate.yaml).
 The same rule applies the other way for `backendRefs`: an HTTPRoute's
 backend has to be in the route's own namespace or it needs a
 `ReferenceGrant`, and without one the route attaches (Gateway still reports
 `Accepted`) and answers 500 — see the comment in
-[`04-routes.yaml`](../platform/manifests/04-routes.yaml).
+[`apps/api/route.yaml`](../platform/manifests/apps/api/route.yaml).
 
 Traefik's Gateway API conformance — checked before relying on
 `HTTPRoutePathRewrite` / `HTTPRouteHostRewrite`:
@@ -244,13 +267,81 @@ mistaken for a convention when the next addon is added.
   tearing down a deploy should not touch the infra under it.
 
 One piece already ports without change: the MariaDB PVC in
-[`05-mariadb.yaml`](../platform/manifests/05-mariadb.yaml) sets no
-`storageClassName`, so it takes the cluster default — `local-path` on kind,
-`pd-balanced` on GKE — with nothing to edit at the manifest.
+[`local/data/mariadb.yaml`](../platform/manifests/local/data/mariadb.yaml)
+sets no `storageClassName`, so it takes the cluster default — `local-path` on
+kind, `pd-balanced` on GKE — with nothing to edit at the manifest.
 
 ---
 
-## 8. Comments
+## 8. Data tier — why MariaDB and Redis aren't charts
+
+`charts/platform-service/templates/` has exactly seven templates
+(`_analysistemplate`, `_configmap`, `_deployment-rollout`, `_helpers`,
+`_networkpolicy`, `_pdb`, `_service` — `ls charts/platform-service/templates/`)
+and none of them is a StatefulSet, a PVC, or a Job. A workload that needs
+`volumeClaimTemplates`, a headless Service, or a one-shot Job doesn't fit the
+shape this library chart was built for, so it lives in `platform/manifests/`
+instead — [`local/data/mariadb.yaml`](../platform/manifests/local/data/mariadb.yaml),
+[`local/data/redis.yaml`](../platform/manifests/local/data/redis.yaml).
+
+The deeper reason: both file headers already say what these are — a stand-in
+for Cloud SQL for MySQL and for Memorystore. Production targets a managed
+service; these exist only so the stack is testable on a laptop with no cloud
+account. No Helm release owns them by design — `helm list -n data` comes back
+empty, and that's expected, not a gap.
+
+### Single instance is the design, not a limitation to fix later
+
+`local/data/mariadb.yaml` and `local/data/redis.yaml` both pin `replicas: 1`. Raising either
+doesn't scale it:
+
+| Raise this | What actually happens | Symptom |
+|---|---|---|
+| MariaDB `replicas` | Each pod gets its own PVC via `volumeClaimTemplates`, the stock image sets up no replication between them, the Service is headless (`clusterIP: None`) so connections land on whichever pod is up, and `mariadb-init` only ran once — one pod has the schema, the rest don't | A write reads back missing, alternating with `Table ... doesn't exist` |
+| Redis `replicas` | ClusterIP spreads connections across pods with nothing replicating between them | Sessions split — logged in on one request, logged out on the next |
+
+The ceiling that's actually reached first is connections, not CPU:
+`apps/services/internal/shared/db/mariadb.go:35` sets `SetMaxOpenConns(25)`
+per pod. auth-svc, order-svc, payment-svc run 2 replicas each —
+150 possible connections against MariaDB's default `max_connections` of 151,
+which `local/data/mariadb.yaml` doesn't override.
+
+### What actually blocks read scaling: one endpoint, hardcoded
+
+`MARIADB_DSN` (Secret `app-secrets`) and `REDIS_ADDR` (ConfigMap
+`app-config`, literal in `charts/apps/platform-config/values.yaml:24`) each
+name exactly one host. A read replica or a Redis Sentinel setup needs a
+second key plus a code change in `apps/services/internal/shared/db/` to pick
+between them — swapping the manifest for a managed service doesn't remove
+this coupling, a Cloud SQL read replica still needs a second endpoint the
+service doesn't currently have anywhere to put.
+
+### The goal — data tier as an external dependency — isn't true yet
+
+The intent is that `platform/manifests/local/data/mariadb.yaml` and
+`local/data/redis.yaml` could be left unapplied and the services pointed at an
+external endpoint instead. Three things stand in the way today:
+
+1. [`Makefile:150-155`](../Makefile) (`app-secrets` target) builds the DSN itself, reading the
+   in-cluster `mariadb` Secret and hardcoding the host
+   `mariadb.<data-ns>.svc.cluster.local` — there's nowhere to hand it an
+   external host instead.
+2. `REDIS_ADDR` is a literal committed to
+   `charts/apps/platform-config/values.yaml`, not sourced from anywhere that
+   could point off-cluster.
+3. The peer catalogue in
+   [`_networkpolicy.tpl`](../charts/platform-service/templates/_networkpolicy.tpl)
+   has no `ipBlock` peer. An external endpoint would render a policy that
+   matches nothing and drop the traffic silently — the exact failure that
+   template's own comment warns about.
+
+There is no `make` flag that skips the data tier. Until those three move,
+"local substitute for a managed service" describes the file headers' intent,
+not the current wiring.
+
+---
+
+## 9. Comments
 
 Comments explain the failure that would happen without the line, not what
 the line does. Full rule and example: [`CLAUDE.md`](../CLAUDE.md#comments-in-makefile--manifests--scripts).

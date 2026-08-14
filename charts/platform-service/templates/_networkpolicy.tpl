@@ -24,8 +24,9 @@ The peer catalogue. Each entry renders one `from`/`to` element plus its ports.
 
 Cross-namespace peers select on kubernetes.io/metadata.name, which the API
 server sets on every namespace and nobody can forget to apply — the hand-written
-labels in 01-namespaces.yaml are not on kube-system, and the traefik namespace
-is created by helm --create-namespace, which labels nothing.
+labels in platform/manifests/apps/web/namespace.yaml and
+platform/manifests/apps/api/namespace.yaml are not on kube-system, and the
+traefik namespace is created by helm --create-namespace, which labels nothing.
 */}}
 {{- define "platform-service.networkpolicy.peer" -}}
 {{- $peer := .peer -}}

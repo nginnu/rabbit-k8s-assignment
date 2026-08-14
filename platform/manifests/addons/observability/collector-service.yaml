@@ -1,12 +1,3 @@
-# The observability namespace and the one Service the upstream charts do not
-# create for us.
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: observability
-  labels:
-    app.kubernetes.io/part-of: platform
----
 # otel-collector is the address every service already points at through
 # app-config. The Alloy chart names its Service after the release, so this alias
 # selects the same pods under the name the applications expect.

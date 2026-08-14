@@ -1,0 +1,11 @@
+# Environments are separated by cluster, not by namespace prefix, so nothing
+# here carries "local" or "dev" in its name.
+#
+# Data sits apart for the same reason: a policy can be written about namespaces
+# rather than having to name every pod.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: data
+  labels:
+    app.kubernetes.io/part-of: platform

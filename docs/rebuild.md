@@ -14,10 +14,13 @@ its own leaves the old cluster in place.
 ## What `make up` does
 
 ```
-cluster ──→ gateway ──→ images ──→ observability ──→ rollouts ──→ argocd ──→ apps ──→ verify
-   │           │                        │
-   │           └─ gateway-api CRDs      └─ prometheus, loki, tempo,
-   │              traefik                  alloy, grafana
+cluster ──→ gateway ──→ traefik-dashboard ──→ images ──→ observability ──→ rollouts ──→ argocd ──→ apps ──→ gitops-bootstrap ──→ verify
+   │           │              │                                 │
+   │           │              └─ dashboard route, after          └─ prometheus, loki, tempo,
+   │           │                 gateway is Programmed and          alloy, grafana
+   │           │                 traefik's chart exposes :8080
+   │           └─ gateway-api CRDs
+   │              traefik
    │              cert-manager + CA
    │              Gateway + routes
    │
@@ -27,6 +30,11 @@ cluster ──→ gateway ──→ images ──→ observability ──→ rol
 `observability` runs before `apps` so the first requests are captured. The
 services do not depend on it — the OTel SDK logs a failed export and carries on,
 so a missing collector costs telemetry, not availability.
+
+`gitops-bootstrap` hands `dummy` to Argo CD after `apps`, never before —
+applied first, Argo CD would create `dummy`'s objects itself with no
+`meta.helm.sh` ownership, and the `helm upgrade --install dummy` in `apps`
+would then refuse to adopt them.
 
 `verify` runs at the end without being asked.
 

@@ -2,8 +2,14 @@
 #
 # This file is the bootstrap seam and the one thing here that is not itself
 # under GitOps: something has to apply the first Application before Argo CD is
-# managing anything. `make argocd` applies it, and from then on the loop runs
-# without make.
+# managing anything. `make gitops-bootstrap` applies it — `make argocd` stops
+# at namespace.yaml and route.yaml — and from then on the loop runs without
+# make.
+#
+# That target runs after `make apps`, never before. Applied first, Argo CD
+# creates dummy's objects itself and the later `helm upgrade --install dummy`
+# aborts: NetworkPolicy "dummy" in api exists without the
+# app.kubernetes.io/managed-by=Helm label and cannot be imported.
 #
 # dummy only, on purpose. Nothing calls dummy, so a sync that goes wrong takes
 # out a workload no other service depends on. The other five stay with helm
@@ -62,13 +68,14 @@ spec:
       # fought.
       selfHeal: true
     syncOptions:
-      # api already exists from 01-namespaces.yaml. Left unset Argo CD would
-      # not create it anyway; stated so that a fresh cluster fails on the
-      # missing namespace rather than creating an unlabelled one that 01 then
-      # disagrees with — and an unlabelled namespace is not a cosmetic
-      # difference now: 11/12 select app traffic by
+      # api already exists from apps/api/namespace.yaml. Left unset Argo CD
+      # would not create it anyway; stated so that a fresh cluster fails on the
+      # missing namespace rather than creating an unlabelled one that
+      # apps/api/namespace.yaml then disagrees with — and an unlabelled
+      # namespace is not a cosmetic difference now: local/data/netpol.yaml and
+      # addons/observability/netpol.yaml select app traffic by
       # kubernetes.io/metadata.name, which the API server sets, but the
-      # part-of label 01 carries is what marks it as ours.
+      # part-of label apps/api/namespace.yaml carries is what marks it as ours.
       - CreateNamespace=false
       # Takes over the objects helm installed. They carry meta.helm.sh
       # annotations from the release created by `make apps`; without this the

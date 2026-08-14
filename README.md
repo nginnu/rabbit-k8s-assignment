@@ -298,7 +298,7 @@ the Gateway.
 `demo` is gone. The frontend and the six backend workloads are split into two
 namespaces so a NetworkPolicy peer can be written by namespace instead of by
 naming every pod (`kubernetes.io/metadata.name` on the namespace, set by the
-API server, not a hand-applied label — see `platform/manifests/01-namespaces.yaml`).
+API server, not a hand-applied label — see `platform/manifests/apps/web/namespace.yaml`).
 
 ```
                               https://localhost/
@@ -341,8 +341,8 @@ namespace could reach every other regardless of what was declared. That was
 wrong to leave standing once `data` and `observability` had real enforcement
 next to it.
 
-Run on 2026-08-13: `make up` applies all of it (`11-netpol-data.yaml` and
-`12-netpol-observability.yaml` are wired into the `data` and `observability`
+Run on 2026-08-13: `make up` applies all of it (`local/data/netpol.yaml` and
+`addons/observability/netpol.yaml` are wired into the `data` and `observability`
 targets), `kubectl get netpol -A` showed policies in every namespace above,
 and the full 51-check suite — which exercises every allowed path in the
 diagram — passed with 0 pod restarts. That proves the allow rules are not
