@@ -7,8 +7,8 @@ import TraceBadge from "@/components/TraceBadge";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
+  const [username, setUsername] = useState("bob");
+  const [password, setPassword] = useState("password");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [traceId, setTraceId] = useState<string | null>(null);
