@@ -1,0 +1,23 @@
+# Kiali on its own host — the grafana shape exactly: a dedicated hostname so
+# nothing collides with the storefront's catch-all, the platform Gateway as
+# the only parent, and no path rewriting anywhere. The console is served at
+# the root of kiali.localhost and nowhere else.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: kiali
+  namespace: observability
+spec:
+  hostnames:
+    - kiali.localhost
+  parentRefs:
+    - name: platform
+      namespace: traefik
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: / }
+      backendRefs:
+        # The chart's own service, port 20001 — verified against the rendered
+        # chart, not from memory of an older Kiali.
+        - name: kiali
+          port: 20001

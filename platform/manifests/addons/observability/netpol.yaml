@@ -118,6 +118,16 @@ spec:
       ports:
         - protocol: TCP
           port: 3000
+    # Kiali probes the in_cluster_url to report Grafana's health beside the
+    # links it prints. Without this rule that probe times out and the console
+    # shows Grafana as down while it serves fine.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: kiali
+      ports:
+        - protocol: TCP
+          port: 3000
   egress:
     - to:
         - namespaceSelector:
@@ -179,6 +189,9 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: grafana
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: kiali
       ports:
         - protocol: TCP
           port: 9090
@@ -286,6 +299,96 @@ spec:
     # ipBlock, and the CIDR is the kind node network, which is a property of
     # the local Docker network rather than anything in this repo. That makes
     # this the one rule here that is environment-specific.
+    - to:
+        - ipBlock:
+            cidr: 172.19.0.0/16
+      ports:
+        - protocol: TCP
+          port: 6443
+---
+# Kiali, the mesh console. Part of this tier, not istio-system: it is a
+# console over the same Prometheus Grafana reads, and its peers are all here.
+#
+# A pod no policy selects is not isolated at all — without this document the
+# kiali pod would install "working" with allow-all, which is the opposite of
+# this namespace's posture, and the difference would only surface the day
+# someone tightened something else and this pod lost a path it never declared.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kiali
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: kiali
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: kiali
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # The gateway only, mirroring the grafana rule above: the console is
+    # served at kiali.localhost through the platform Gateway on the chart's
+    # own service port.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - protocol: TCP
+          port: 20001
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Every number the console shows, on the pod port behind the Service
+    # URL the values file dials (Service :80, container :9090 — the policy
+    # sees the destination after DNAT, which is the pod port).
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - protocol: TCP
+          port: 9090
+    # The health probe against external_services.grafana.in_cluster_url.
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: grafana
+      ports:
+        - protocol: TCP
+          port: 3000
+    # The Kubernetes API — Kiali's view of the mesh is CRs read from the API
+    # server, continuously. Two addresses, because that is what it takes:
+    #
+    # The Service VIP is what an in-cluster client actually dials
+    # (10.96.0.1:443 — the address in Kiali's own logs when this was blocked).
+    # The loki rule above names the node CIDR and port 6443 instead, and that
+    # rule does not match the VIP: every API call then burns its full 30s
+    # timeout, Kiali spends longer retrying at startup than its startup probe
+    # tolerates, and the pod crash-loops on "connection refused" without ever
+    # binding its port — a failure that reads as a broken Kiali, not a blocked
+    # one. The node form stays beside it to cover the post-DNAT path.
+    - to:
+        - ipBlock:
+            cidr: 10.96.0.1/32
+      ports:
+        - protocol: TCP
+          port: 443
     - to:
         - ipBlock:
             cidr: 172.19.0.0/16

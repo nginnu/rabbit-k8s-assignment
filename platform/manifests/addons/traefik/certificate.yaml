@@ -20,6 +20,7 @@ spec:
     - argocd.localhost
     - traefik.localhost
     - hubble.localhost
+    - kiali.localhost
   # So a request that bypasses name resolution validates too, rather than
   # failing on a SAN mismatch.
   ipAddresses:

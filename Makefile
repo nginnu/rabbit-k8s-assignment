@@ -62,6 +62,7 @@ cilium: cluster
 	@kubectl wait --for=condition=Ready nodes --all --timeout=180s
 
 ISTIO_VERSION := 1.30.3
+KIALI_VERSION := 2.30.0
 
 ## istio: install the mesh control plane — it injects nothing until a namespace asks
 # On cilium:, like everything else that needs a schedulable node. Deliberately
@@ -100,6 +101,43 @@ istio: cilium
 	@# Harmless before any pod is meshed: a DestinationRule only speaks when a
 	@# sidecar makes a call, so no pod can come up meshed ahead of the rule.
 	@kubectl apply -f $(MANIFESTS)/addons/istio/destination-rule.yaml
+
+## kiali: mesh console — the graph of who talks to whom, over the running mesh
+# After istio and observability, not merely after istio: Kiali reads Istio CRs
+# from the API server and every number it shows from Prometheus. An install
+# ahead of either comes up as a console with a blank graph, which reads as
+# broken rather than early.
+# The server chart, not kiali-operator: this repo installs addons as plain
+# helm releases and owns their values outright — an operator wrapping one
+# server adds a controller to debug and nothing else. Chart 2.30 is the line
+# tested against Istio 1.30 (kiali.io prerequisites).
+kiali: istio observability
+	@helm repo add kiali https://kiali.org/helm-charts >/dev/null 2>&1 || true
+	@helm repo update kiali >/dev/null
+	@# In observability, not istio-system: it is a console beside Grafana over
+	@# the same Prometheus, in the namespace whose NetworkPolicy already opens
+	@# that path. No --set for the same reason as istiod — values live in the
+	@# file or they stop describing what runs.
+	@helm upgrade --install kiali kiali/kiali-server \
+		-n observability --version $(KIALI_VERSION) \
+		-f platform/addons/kiali/local/values.yaml \
+		--wait --timeout 5m
+	@# The v is stripped, not carried in KIALI_VERSION: the pin reads cleaner
+	@# unprefixed everywhere else it is printed.
+	@./platform/scripts/check-version.sh kiali $(KIALI_VERSION) \
+		"$$(kubectl -n observability get deploy kiali \
+			-o jsonpath='{.spec.template.spec.containers[0].image}' | sed 's/.*://; s/^v//')"
+	@# The host the route answers on has to be in the certificate or the
+	@# browser turns the console into a TLS warning that reads as a broken
+	@# install. Re-applying the manifest is idempotent — cert-manager sees the
+	@# added dnsName and re-issues — and the wait holds this target until it
+	@# has, because a route programmed against the old certificate fails on
+	@# first visit with nothing saying why.
+	@kubectl apply -f $(MANIFESTS)/addons/traefik/certificate.yaml
+	@kubectl -n traefik wait --for=condition=Ready certificate/platform-tls --timeout=120s
+	@# Same point in the flow as the grafana route in observability: the
+	@# console exists, the edge knows its host, the two meet here.
+	@kubectl apply -f $(MANIFESTS)/addons/kiali/route.yaml
 
 ## namespaces: create the namespaces everything else lands in
 # On cilium:, not cluster:. data, observability, rollouts, argocd and apps reach
@@ -475,7 +513,7 @@ gitops-bootstrap:
 			exit 1; }; \
 	done
 
-## up: cluster, cilium, gateway, traefik-dashboard, hubble, istio, images, observability, rollouts, argocd, apps, gitops-bootstrap
+## up: cluster, cilium, gateway, traefik-dashboard, hubble, istio, images, observability, kiali, rollouts, argocd, apps, gitops-bootstrap
 # cilium is named here as well as inherited, so the one target everyone reads
 # shows the CNI landing before anything that needs a schedulable node.
 # istio before images and apps: once a namespace is labelled for injection, a
@@ -486,6 +524,10 @@ up: cluster cilium gateway traefik-dashboard hubble istio images
 	@# do not depend on it: the OTel SDK logs an export failure and carries on,
 	@# so a missing collector costs telemetry, not availability.
 	@$(MAKE) --no-print-directory observability
+	@# Kiali right after: its whole surface is the metrics the stack just
+	@# started collecting, and before apps there is nothing for it to graph
+	@# yet — only the mesh itself, which is exactly the first view wanted.
+	@$(MAKE) --no-print-directory kiali
 	@# Before apps, not after: once a service is a Rollout, its chart fails to
 	@# render against a cluster where the CRD is not registered yet.
 	@$(MAKE) --no-print-directory rollouts
@@ -565,7 +607,7 @@ test-tls:
 down:
 	@kind delete cluster --name $(CLUSTER)
 
-.PHONY: help cluster cilium istio namespaces gateway-api traefik tls gateway traefik-dashboard hubble secrets app-secrets \
+.PHONY: help cluster cilium istio kiali namespaces gateway-api traefik tls gateway traefik-dashboard hubble secrets app-secrets \
         sql data images observability rollouts argocd gitops-bootstrap apps up verify down \
         test test-routing test-mesh test-istio test-auth test-checkout test-resilience test-tls \
         test-o11y test-journey
