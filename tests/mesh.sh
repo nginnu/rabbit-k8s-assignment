@@ -7,8 +7,8 @@
 # Allow-path routing is already proven end to end by tests/routing.sh,
 # tests/checkout.sh, tests/auth.sh — not repeated here.
 #
-# Cilium here is CNI + NetworkPolicy only; sidecar injection and mesh mTLS
-# are a later phase, see notes/09-service-mesh-plan.md.
+# Cilium here is CNI + NetworkPolicy only. The sidecar mesh layered on top has
+# its own suite — tests/istio.sh; see notes/09-service-mesh-plan.md.
 #
 #   ./tests/mesh.sh
 

@@ -38,6 +38,11 @@ services:
     topologySpread: true
     pdb: { minAvailable: 1 }
 
+    # The other half of the mTLS pair with mock-payment: a sidecar on both ends
+    # negotiates mTLS on that east-west hop even under PERMISSIVE, which is the
+    # gap the mesh exists to close. Edge traffic stays plaintext to Traefik.
+    mesh: true
+
     networkPolicy: true
     networkPolicyPeers:
       # The other half of the order-svc cycle: order-svc starts a payment, this

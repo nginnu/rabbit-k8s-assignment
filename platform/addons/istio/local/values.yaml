@@ -1,8 +1,15 @@
-# Values for the istiod chart, sized for a local cluster.
+# Control plane only. Nothing is injected by this file: istiod's webhook acts on
+# namespaces carrying istio-injection=enabled, and no namespace in this repo
+# carries it yet. Installing this changes no existing pod.
+#
+# Traefik keeps the edge. No istio gateway chart is installed and no
+# GatewayClass is created here — see the Makefile's istio: target.
 
 pilot:
-  # Three Docker containers share this machine — small, but not so small that
-  # istiod gets OOM-killed.
+  # The chart asks for 500m CPU / 2Gi memory by default, sized for a real
+  # cluster. Three kind nodes share one laptop, and a request that large lands
+  # istiod in Pending with "Insufficient memory" long after the install reports
+  # success.
   resources:
     requests:
       cpu: 100m
@@ -10,13 +17,29 @@ pilot:
     limits:
       cpu: 500m
       memory: 512Mi
+
+  # The chart's default is an HPA. Nothing in this cluster installs
+  # metrics-server, so that HPA sits permanently unable to read a metric and
+  # reports it as a failing target in every describe — noise that looks like a
+  # broken control plane.
   autoscaleEnabled: false
 
 meshConfig:
-  # Access logs to stdout — the quickest way to see which route a request took.
+  # Without this the proxy logs nothing about the requests it forwards, and the
+  # first question after injection — "did the request even reach the sidecar" —
+  # has no answer anywhere.
   accessLogFile: /dev/stdout
-  defaultConfig:
-    proxyMetadata: {}
 
-# Sidecar injection is off; namespaces opt in with a label. Ingress only, so a
-# broken request has one place to look instead of two.
+global:
+  proxy:
+    # Inert until a namespace is labelled, set now because the default is
+    # 100m/128Mi requested per sidecar: six services would reserve 600m of CPU
+    # before a single request is served, on nodes that already run Cilium,
+    # Traefik and the LGTM stack.
+    resources:
+      requests:
+        cpu: 30m
+        memory: 96Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi

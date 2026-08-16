@@ -39,6 +39,11 @@ services:
     topologySpread: true
     pdb: { minAvailable: 1 }
 
+    # In the mesh with the rest of api now that mock-payment proved the sidecar
+    # pattern. Edge traffic still arrives plaintext from Traefik, so the mesh
+    # runs PERMISSIVE — STRICT would cut this service off from the gateway.
+    mesh: true
+
     networkPolicy: true
     networkPolicyPeers:
       # The browser calls /api/auth through the gateway itself, so the gateway

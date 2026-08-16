@@ -46,6 +46,12 @@ services:
     topologySpread: true
     pdb: { minAvailable: 1 }
 
+    # Same mesh opt-in as its siblings, with one caveat: this chart is synced
+    # by Argo CD from main, not by `make apps`, so the sidecar arrives only
+    # after the commit is pushed and Argo syncs — until then dummy runs 1/1 and
+    # tests/istio.sh warns instead of failing on it.
+    mesh: true
+
     networkPolicy: true
     networkPolicyPeers:
       ingress: [gateway]

@@ -1,0 +1,27 @@
+# East-west mTLS, stated rather than implied.
+#
+# PERMISSIVE (the mesh default) already negotiates mTLS between two sidecars,
+# so on the wire this rule changes nothing today. What it changes is that the
+# behaviour is declared here and survives an istiod upgrade that moves the
+# default, instead of depending on one.
+#
+# Client-side only: a DestinationRule sets how a caller speaks. The server side
+# stays PERMISSIVE because Traefik is not in the mesh and its plaintext HTTP
+# must keep being accepted — a PeerAuthentication STRICT here would cut every
+# edge route at once. STRICT is deferred until Traefik re-encrypts to backends;
+# see notes/09-service-mesh-plan.md.
+#
+# In namespace api with exportTo "." — the only callers of api services that
+# have a sidecar are api services themselves, so nothing else needs to see it.
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: east-west-mtls
+  namespace: api
+spec:
+  host: "*.api.svc.cluster.local"
+  exportTo:
+    - "."
+  trafficPolicy:
+    tls:
+      mode: ISTIO_MUTUAL

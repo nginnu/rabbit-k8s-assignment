@@ -62,6 +62,27 @@ traefik namespace is created by helm --create-namespace, which labels nothing.
     port: 53
   - protocol: TCP
     port: 53
+{{- else if eq $peer "istiod" }}
+{{/*
+  15012 only. The sidecar pulls its whole configuration and its certificate over
+  this one port, and it is the first thing it does — with the port closed the
+  proxy never becomes ready, the pod never leaves 1/2, and the rollout stalls on
+  a service that has nothing wrong with it.
+
+  15010 is the plaintext form of the same stream and stays closed: istiod serves
+  both, so opening it turns a single typo in a proxy config into an unencrypted
+  certificate exchange that still works and is never noticed.
+*/}}
+- from_or_to:
+  - namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: istio-system
+    podSelector:
+      matchLabels:
+        app.kubernetes.io/name: istiod
+  ports:
+  - protocol: TCP
+    port: 15012
 {{- else if eq $peer "alloy" }}
 - from_or_to:
   - namespaceSelector:
@@ -102,7 +123,7 @@ traefik namespace is created by helm --create-namespace, which labels nothing.
       matchLabels:
         app.kubernetes.io/name: {{ $target }}
 {{- else }}
-{{- fail (printf "networkPolicy: unknown peer %q on a service in namespace %s — use gateway, dns, alloy, mariadb, redis, or svc:<name>" $peer $ns) }}
+{{- fail (printf "networkPolicy: unknown peer %q on a service in namespace %s — use gateway, dns, istiod, alloy, mariadb, redis, or svc:<name>" $peer $ns) }}
 {{- end }}
 {{- end -}}
 
@@ -132,7 +153,15 @@ caller rewrites, so the peer catalogue is written once instead of twice.
   cannot look up its own database and reports it as a connection failure.
   Leaving it to be typed six times means it gets forgotten once.
 */}}
-{{- $egress := concat ($np.egress | default list) (list "dns") | uniq }}
+{{- $egress := concat ($np.egress | default list) (list "dns") -}}
+{{/*
+  istiod is injected off `mesh`, the same way dns is injected unconditionally,
+  and for the same reason: it is a peer nobody remembers a sidecar needs. Tying
+  it to the flag that adds the sidecar means the allow rule cannot be forgotten
+  in the one edit that makes it necessary.
+*/}}
+{{- if $svc.mesh }}{{- $egress = concat $egress (list "istiod") -}}{{- end }}
+{{- $egress = $egress | uniq }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

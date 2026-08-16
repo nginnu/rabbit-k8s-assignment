@@ -61,6 +61,46 @@ cilium: cluster
 	@# Pending, and the scheduler says only "0/4 nodes are available".
 	@kubectl wait --for=condition=Ready nodes --all --timeout=180s
 
+ISTIO_VERSION := 1.30.3
+
+## istio: install the mesh control plane — it injects nothing until a namespace asks
+# On cilium:, like everything else that needs a schedulable node. Deliberately
+# not on gateway:, and no istio gateway chart is installed: a second Gateway
+# controller writes its own status onto the same HTTPRoutes and the request
+# reaches whichever one owns the hostPort.
+istio: cilium
+	@# A repo, not oci:// like cilium: Istio's charts are mirrored to ghcr.io but
+	@# that path denies anonymous pulls (403 on the token request), so an oci://
+	@# ref fails the install outright on a machine with no ghcr credentials.
+	@helm repo add istio https://istio-release.storage.googleapis.com/charts >/dev/null 2>&1 || true
+	@helm repo update istio >/dev/null
+	@# base carries the CRDs. istiod's templates reference them at render time,
+	@# so installing istiod first fails on kinds the API server never heard of.
+	@helm upgrade --install istio-base istio/base \
+		-n istio-system --create-namespace --version $(ISTIO_VERSION) \
+		--wait --timeout 5m
+	@# No --set: pilot sizing and meshConfig live in the values file. A flag here
+	@# would override it silently and the file would stop describing what runs.
+	@helm upgrade --install istiod istio/istiod \
+		-n istio-system --version $(ISTIO_VERSION) \
+		-f platform/addons/istio/local/values.yaml \
+		--wait --timeout 5m
+	@# The istio-cni node agent is deliberately absent. It chains a plugin onto
+	@# the node's CNI conflist, and cilium runs with cni-exclusive=true, which
+	@# deletes other plugins' config: pods would then start with no redirect,
+	@# stay Ready, and carry no sidecar traffic with nothing logging why. Sidecar
+	@# mode does not need it — istio-init does the same work inside the pod.
+	@./platform/scripts/check-version.sh istiod $(ISTIO_VERSION) \
+		"$$(kubectl -n istio-system get deploy istiod \
+			-o jsonpath='{.spec.template.spec.containers[0].image}' | sed 's/.*://')"
+	@# The east-west mTLS policy, by file and not by folder: the manifest folder
+	@# is where a future PeerAuthentication STRICT would also live, and that one
+	@# must never ride in on a directory apply — it cuts every edge route the
+	@# moment Traefik, still unmeshed, keeps sending plaintext (notes/09).
+	@# Harmless before any pod is meshed: a DestinationRule only speaks when a
+	@# sidecar makes a call, so no pod can come up meshed ahead of the rule.
+	@kubectl apply -f $(MANIFESTS)/addons/istio/destination-rule.yaml
+
 ## namespaces: create the namespaces everything else lands in
 # On cilium:, not cluster:. data, observability, rollouts, argocd and apps reach
 # the cluster through here and nowhere else, and without the edge `make apps`
@@ -435,10 +475,13 @@ gitops-bootstrap:
 			exit 1; }; \
 	done
 
-## up: cluster, cilium, gateway, traefik-dashboard, hubble, images, observability, rollouts, argocd, apps, gitops-bootstrap
+## up: cluster, cilium, gateway, traefik-dashboard, hubble, istio, images, observability, rollouts, argocd, apps, gitops-bootstrap
 # cilium is named here as well as inherited, so the one target everyone reads
 # shows the CNI landing before anything that needs a schedulable node.
-up: cluster cilium gateway traefik-dashboard hubble images
+# istio before images and apps: once a namespace is labelled for injection, a
+# pod created while istiod is still installing gets no sidecar and has to be
+# deleted by hand to acquire one.
+up: cluster cilium gateway traefik-dashboard hubble istio images
 	@# Observability first only so the first requests are captured. The services
 	@# do not depend on it: the OTel SDK logs an export failure and carries on,
 	@# so a missing collector costs telemetry, not availability.
@@ -490,6 +533,10 @@ test-routing:
 test-mesh:
 	@./tests/mesh.sh
 
+## test-istio: every api pod carries a ready sidecar and traffic flows through it
+test-istio:
+	@./tests/istio.sh
+
 ## test-auth: credentials are checked and the token opens the api
 test-auth:
 	@./tests/auth.sh
@@ -518,7 +565,7 @@ test-tls:
 down:
 	@kind delete cluster --name $(CLUSTER)
 
-.PHONY: help cluster cilium namespaces gateway-api traefik tls gateway traefik-dashboard hubble secrets app-secrets \
+.PHONY: help cluster cilium istio namespaces gateway-api traefik tls gateway traefik-dashboard hubble secrets app-secrets \
         sql data images observability rollouts argocd gitops-bootstrap apps up verify down \
-        test test-routing test-mesh test-auth test-checkout test-resilience test-tls \
+        test test-routing test-mesh test-istio test-auth test-checkout test-resilience test-tls \
         test-o11y test-journey

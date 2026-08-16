@@ -67,9 +67,11 @@ Section 6 does not depend on this one.
 
 - [x] default-deny NetworkPolicy
 - [x] explicit allow rules between services that talk to each other
-- [ ] verify: a blocked pod cannot reach the database — `make up` on
-  2026-08-13 exercised every *allowed* path (all 51 suite checks passed with
-  the policies enforced), but no suite attempts a denied path; see Deferred
+- [ ] verify: a blocked pod cannot reach the database — `tests/mesh.sh` now
+  attempts the denied path (web-ui → mariadb:3306, expects a refusal), but no
+  green run has been observed on the current tree: `make up` is failing
+  partway (see Known issues), and until a full `run-all.sh` passes on it this
+  stays open; see Deferred
 
 ## 9. Deliverables ⚠️ unverified
 
@@ -79,6 +81,27 @@ Section 6 does not depend on this one.
   on 2026-08-13 was a rebuild on this machine, which has built and loaded
   these images before; a clone on a machine that has never seen the repo is
   still unproven
+
+## 10. Service mesh, east-west ⚠️ code complete, unverified
+
+Istio as sidecar injection only — Traefik keeps the edge, and no istio gateway
+chart and no istio-cni are installed (see [notes/09](notes/09-service-mesh-plan.md)).
+Everything below is written; nothing has been observed running on a cluster yet.
+
+- [x] istiod installed by `make istio` — base + istiod pinned 1.30.3, sized
+  for kind, control plane only
+- [x] every api workload opts in per-pod — `mesh: true` in each chart, which
+  labels the pod and adds the istiod:15012 egress rule to its NetworkPolicy
+- [x] east-west mTLS declared — DestinationRule ISTIO_MUTUAL for
+  `*.api.svc.cluster.local`; PERMISSIVE stays, because Traefik's plaintext
+  edge traffic must keep being accepted
+- [ ] verify: `make test-istio` passes — sidecar present and ready on every
+  api pod, an edge request visible in a sidecar access log
+- [ ] verify: the full suite passes with the mesh on (`make test`)
+
+dummy joins the mesh only after its chart change is pushed and Argo CD syncs —
+`tests/istio.sh` warns on its missing sidecar instead of failing. STRICT
+mTLS is deferred until Traefik re-encrypts to backends (notes/09).
 
 ## Deferred
 
@@ -96,16 +119,18 @@ Section 6 does not depend on this one.
   `observability` targets respectively, not a manual step). `make up` on
   2026-08-13 exercised every *allowed* path across all 51 suite checks with 0
   pod restarts — proof the allow rules do not block traffic that should pass.
-  What is not proven is the other half of the claim in section 8 ("a blocked
-  pod cannot reach the database"): no `tests/*netpol*` script tries a denied
-  path. Stays here until one exists and passes.
+  The denied-path script now exists — `tests/mesh.sh` execs into web-ui and
+  expects the mariadb connection refused — but it has not been observed
+  passing on the current tree, because `make up` is failing partway on it (see
+  Known issues). Stays here until a green `run-all.sh` is recorded.
 
 ## Known issues (senior-devops)
 
-- `Makefile:223` waits on `kubectl rollout status deployment/$$d` for every
-  name in `APP_DEPLOYS`, but `order-svc` renders as a `Rollout`
+- The `apps` target's wait loop runs `kubectl rollout status deployment/$$d`
+  for every name in `APP_DEPLOYS`, but `order-svc` renders as a `Rollout`
   (`workloadKind: Rollout` in `charts/apps/order-svc/values.yaml`), not a
-  `Deployment`. `make up` prints `Error from server (NotFound): deployments.apps
+  `Deployment`. `make apps` prints `Error from server (NotFound): deployments.apps
   "order-svc" not found` for that one name and moves on without ever waiting
   for it — pre-existing, confirmed still present on 2026-08-13, not
-  introduced by the Traefik/netpol change.
+  introduced by the Traefik/netpol change. It matters more now: the mesh
+  rollout is exactly the kind of change that step exists to wait for.

@@ -1,9 +1,11 @@
 # Service mesh: Cilium vs Istio, and the boundary with Traefik
 
-> **Status: DRAFT — planning only, nothing in this note is implemented or
-> tested yet. Written 2026-08-14, ahead of the usual notes/ convention (see
-> CLAUDE.md) at the user's explicit request. Revise or fold into a normal
-> after-the-fact note once the mesh choice is implemented.**
+> **Status: decision made 2026-08-15 — Istio, sidecar mode, PERMISSIVE. Code
+> complete on this tree; no live-cluster verification yet (the injection
+> checklist below has still not been run — `tests/istio.sh` is that checklist,
+> executable). Originally written 2026-08-14 as a planning draft, ahead of the
+> usual notes/ convention (see CLAUDE.md) at the user's explicit request. Revise
+> or fold into a normal after-the-fact note once the mesh choice is verified.**
 
 ---
 
@@ -137,3 +139,32 @@ watching if scope ever grows past that, not a problem that exists today.
 | `platform/manifests/addons/traefik/route.yaml` | routing to Traefik's own dashboard, URLRewrite filter |
 
 None of this moves to the mesh under the working boundary above.
+
+---
+
+## Decision (2026-08-15): Istio, sidecars, PERMISSIVE — Traefik untouched
+
+- **Istio wins the mesh slot**, as sidecar injection only. No istio-cni
+  (cilium runs `cni-exclusive=true` and would delete the chained plugin
+  config; `istio-init` does the redirect inside the pod), no istio gateway
+  chart, no GatewayClass — Traefik keeps north-south entirely.
+- **Every api workload opts in per-pod** — `mesh: true` in each chart renders
+  `sidecar.istio.io/inject: "true"` on the pod template and adds the
+  istiod:15012 egress rule to that service's NetworkPolicy. Not a namespace
+  label: the decision stays with the release that owns the pod, anything
+  landing in `api` later is not silently injected, and a namespace label
+  added later would take precedence over every per-pod flag.
+- **mTLS is PERMISSIVE plus a DestinationRule** (`ISTIO_MUTUAL`,
+  `*.api.svc.cluster.local`, applied by `make istio`): east-west between
+  sidecars is encrypted and now declared rather than a default relied on,
+  while Traefik's plaintext edge traffic keeps being accepted.
+- **Deferred: STRICT.** A PeerAuthentication STRICT in `api` would cut every
+  edge route the moment it applies — Traefik is not meshed and cannot speak
+  mTLS to the backends. The follow-up is Traefik re-encrypting to backends: a
+  sidecar on the Traefik pod with its hostPorts (8000/8443) excluded from
+  inbound capture, plus the istiod:15012 egress in the traefik NetworkPolicy.
+  That is row 3 of the no-overlap table below — the TLS handoff seam — and it
+  is not implemented in this round.
+- Verification for this round: `make test-istio` and the full `make test` on a
+  cluster brought up by `make up`. dummy joins only after its chart change is
+  pushed and Argo CD syncs it.

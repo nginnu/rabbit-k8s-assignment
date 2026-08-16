@@ -41,10 +41,20 @@ services:
       - jwt-secret
     topologySpread: false
 
+    # First workload in the mesh. Chosen over dummy because helm still owns this
+    # release: dummy is synced by Argo CD from main and cannot be moved without
+    # a push. Nothing reaches this service from the edge and only payment-svc
+    # calls it, so a sidecar that fails to start is contained here — and with
+    # maxUnavailable 0 the running pod is not replaced until the new one is
+    # ready, so the worst case is a stalled rollout, not a broken checkout.
+    mesh: true
+
     networkPolicy: true
     networkPolicyPeers:
       # Not edge-facing: a gateway stand-in is only ever called from inside.
       ingress: [svc:payment-svc]
+      # istiod is absent on purpose: `mesh: true` above adds that egress rule,
+      # because a sidecar that cannot reach it never reports ready.
       # No mariadb, deliberately. config.LoadBase demands MARIADB_DSN and panics
       # without it, but it only reads the env var — main.go never calls
       # db.OpenMariaDB. The Secret satisfies that, not a network path, so an

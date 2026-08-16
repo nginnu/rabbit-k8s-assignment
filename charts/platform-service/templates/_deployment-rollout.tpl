@@ -42,6 +42,20 @@ spec:
     metadata:
       labels:
         {{- include "platform-service.labels" $lbls | nindent 8 }}
+        {{- if $svc.mesh }}
+        {{/*
+          On the pod, not the namespace. Every service in api carries this now,
+          but a namespace label would also inject anything that lands there
+          later — a debug pod, the next smoke workload — without any chart
+          asking for it. istiod's webhook accepts this per-pod form only while
+          the namespace itself carries no istio-injection label; adding that
+          label later silently takes precedence over every flag set here.
+
+          A label, not an annotation: istiod matches this one with an
+          objectSelector, and selectors cannot read annotations.
+        */}}
+        sidecar.istio.io/inject: "true"
+        {{- end }}
     spec:
       {{- if $svc.topologySpread }}
       topologySpreadConstraints:
