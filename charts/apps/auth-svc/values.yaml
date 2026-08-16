@@ -42,7 +42,7 @@ services:
     # In the mesh with the rest of api now that mock-payment proved the sidecar
     # pattern. Edge traffic still arrives plaintext from Traefik, so the mesh
     # runs PERMISSIVE — STRICT would cut this service off from the gateway.
-    mesh: true
+    mesh: true  # adds netpol istiod (egress) + alloy-scrape:15020 (ingress)
 
     networkPolicy: true
     networkPolicyPeers:

@@ -44,7 +44,7 @@ services:
     # Rollout shares with a Deployment, so the canary pods get sidecars too —
     # and the traffic split stays pod-count-based: adding a VirtualService here
     # would be the mesh taking routing Argo Rollouts already owns.
-    mesh: true
+    mesh: true  # adds netpol istiod (egress) + alloy-scrape:15020 (ingress)
 
     networkPolicy: true
     networkPolicyPeers:

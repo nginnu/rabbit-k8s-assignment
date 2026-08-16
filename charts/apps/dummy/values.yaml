@@ -50,7 +50,7 @@ services:
     # by Argo CD from main, not by `make apps`, so the sidecar arrives only
     # after the commit is pushed and Argo syncs — until then dummy runs 1/1 and
     # tests/istio.sh warns instead of failing on it.
-    mesh: true
+    mesh: true  # adds netpol istiod (egress) + alloy-scrape:15020 (ingress)
 
     networkPolicy: true
     networkPolicyPeers:

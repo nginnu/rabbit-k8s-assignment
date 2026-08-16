@@ -41,7 +41,7 @@ services:
     # The other half of the mTLS pair with mock-payment: a sidecar on both ends
     # negotiates mTLS on that east-west hop even under PERMISSIVE, which is the
     # gap the mesh exists to close. Edge traffic stays plaintext to Traefik.
-    mesh: true
+    mesh: true  # adds netpol istiod (egress) + alloy-scrape:15020 (ingress)
 
     networkPolicy: true
     networkPolicyPeers:

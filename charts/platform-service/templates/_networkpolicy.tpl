@@ -94,6 +94,26 @@ traefik namespace is created by helm --create-namespace, which labels nothing.
   ports:
   - protocol: TCP
     port: 4317
+{{- else if eq $peer "alloy-scrape" }}
+{{/*
+  The same pod as `alloy`, the opposite direction and a different port: the
+  sidecar serves its istio_ metrics on 15020 rather than pushing them, so
+  without this rule Prometheus holds no istio_ series and Kiali's graph is
+  permanently empty while every other signal looks healthy — the failure points
+  at Kiali, not at a dropped packet.
+
+  15020 alone: 15021 is the health probe port and 15090 envoy's raw stats.
+*/}}
+- from_or_to:
+  - namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: observability
+    podSelector:
+      matchLabels:
+        app.kubernetes.io/name: alloy
+  ports:
+  - protocol: TCP
+    port: 15020
 {{- else if eq $peer "mariadb" }}
 - from_or_to:
   - namespaceSelector:
@@ -123,7 +143,7 @@ traefik namespace is created by helm --create-namespace, which labels nothing.
       matchLabels:
         app.kubernetes.io/name: {{ $target }}
 {{- else }}
-{{- fail (printf "networkPolicy: unknown peer %q on a service in namespace %s — use gateway, dns, istiod, alloy, mariadb, redis, or svc:<name>" $peer $ns) }}
+{{- fail (printf "networkPolicy: unknown peer %q on a service in namespace %s — use gateway, dns, istiod, alloy, alloy-scrape, mariadb, redis, or svc:<name>" $peer $ns) }}
 {{- end }}
 {{- end -}}
 
@@ -160,7 +180,15 @@ caller rewrites, so the peer catalogue is written once instead of twice.
   it to the flag that adds the sidecar means the allow rule cannot be forgotten
   in the one edit that makes it necessary.
 */}}
-{{- if $svc.mesh }}{{- $egress = concat $egress (list "istiod") -}}{{- end }}
+{{- if $svc.mesh }}
+{{- $egress = concat $egress (list "istiod") -}}
+{{/*
+  And ingress for the scrape, on the same flag: the sidecar it adds is the only
+  thing serving istio_ metrics, and nothing scrapes a port no policy opens.
+*/}}
+{{- $ingress = concat $ingress (list "alloy-scrape") -}}
+{{- end }}
+{{- $ingress = $ingress | uniq }}
 {{- $egress = $egress | uniq }}
 ---
 apiVersion: networking.k8s.io/v1
