@@ -1,10 +1,3 @@
-# Control plane only. Nothing is injected by this file: istiod's webhook acts on
-# namespaces carrying istio-injection=enabled, and no namespace in this repo
-# carries it yet. Installing this changes no existing pod.
-#
-# Traefik keeps the edge. No istio gateway chart is installed and no
-# GatewayClass is created here — see the Makefile's istio: target.
-
 pilot:
   # The chart asks for 500m CPU / 2Gi memory by default, sized for a real
   # cluster. Three kind nodes share one laptop, and a request that large lands
