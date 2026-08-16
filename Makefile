@@ -65,14 +65,13 @@ ISTIO_VERSION := 1.30.3
 KIALI_VERSION := 2.30.0
 
 ## istio: install the mesh control plane — it injects nothing until a namespace asks
-# On cilium:, like everything else that needs a schedulable node. Deliberately
-# not on gateway:, and no istio gateway chart is installed: a second Gateway
-# controller writes its own status onto the same HTTPRoutes and the request
-# reaches whichever one owns the hostPort.
+# Deliberately not on gateway:, and no istio gateway chart is installed: a second
+# Gateway controller writes its own status onto the same HTTPRoutes and the
+# request reaches whichever one owns the hostPort.
 istio: cilium
-	@# A repo, not oci:// like cilium: Istio's charts are mirrored to ghcr.io but
-	@# that path denies anonymous pulls (403 on the token request), so an oci://
-	@# ref fails the install outright on a machine with no ghcr credentials.
+	@# Not oci://: Istio's ghcr.io mirror denies anonymous pulls (403 on the token
+	@# request), so an oci:// ref fails the install outright on a machine with no
+	@# ghcr credentials.
 	@helm repo add istio https://istio-release.storage.googleapis.com/charts >/dev/null 2>&1 || true
 	@helm repo update istio >/dev/null
 	@# base carries the CRDs. istiod's templates reference them at render time,
@@ -80,63 +79,46 @@ istio: cilium
 	@helm upgrade --install istio-base istio/base \
 		-n istio-system --create-namespace --version $(ISTIO_VERSION) \
 		--wait --timeout 5m
-	@# No --set: pilot sizing and meshConfig live in the values file. A flag here
-	@# would override it silently and the file would stop describing what runs.
+	@# No --set: a flag here overrides the values file silently and the file stops
+	@# describing what runs.
 	@helm upgrade --install istiod istio/istiod \
 		-n istio-system --version $(ISTIO_VERSION) \
 		-f platform/addons/istio/local/values.yaml \
 		--wait --timeout 5m
-	@# The istio-cni node agent is deliberately absent. It chains a plugin onto
-	@# the node's CNI conflist, and cilium runs with cni-exclusive=true, which
-	@# deletes other plugins' config: pods would then start with no redirect,
-	@# stay Ready, and carry no sidecar traffic with nothing logging why. Sidecar
-	@# mode does not need it — istio-init does the same work inside the pod.
+	@# No istio-cni: cilium runs cni-exclusive=true and deletes the plugin config
+	@# istio-cni chains onto the node's conflist, so pods start with no redirect,
+	@# stay Ready, and carry no sidecar traffic with nothing logging why. istio-init
+	@# does the same work inside the pod.
 	@./platform/scripts/check-version.sh istiod $(ISTIO_VERSION) \
 		"$$(kubectl -n istio-system get deploy istiod \
 			-o jsonpath='{.spec.template.spec.containers[0].image}' | sed 's/.*://')"
-	@# The east-west mTLS policy, by file and not by folder: the manifest folder
-	@# is where a future PeerAuthentication STRICT would also live, and that one
-	@# must never ride in on a directory apply — it cuts every edge route the
-	@# moment Traefik, still unmeshed, keeps sending plaintext (notes/09).
-	@# Harmless before any pod is meshed: a DestinationRule only speaks when a
-	@# sidecar makes a call, so no pod can come up meshed ahead of the rule.
+	@# By file, not by folder: a future PeerAuthentication STRICT lands in the same
+	@# folder and must never ride in on a directory apply — it cuts every edge route
+	@# the moment Traefik, still unmeshed, keeps sending plaintext (notes/09).
 	@kubectl apply -f $(MANIFESTS)/addons/istio/destination-rule.yaml
 
 ## kiali: mesh console — the graph of who talks to whom, over the running mesh
-# After istio and observability, not merely after istio: Kiali reads Istio CRs
-# from the API server and every number it shows from Prometheus. An install
-# ahead of either comes up as a console with a blank graph, which reads as
-# broken rather than early.
-# The server chart, not kiali-operator: this repo installs addons as plain
-# helm releases and owns their values outright — an operator wrapping one
-# server adds a controller to debug and nothing else. Chart 2.30 is the line
-# tested against Istio 1.30 (kiali.io prerequisites).
+# After observability as well as istio: Kiali reads Istio CRs from the API server
+# and every number it shows from Prometheus, so an install ahead of either comes
+# up as a console with a blank graph, which reads as broken rather than early.
 kiali: istio observability
 	@helm repo add kiali https://kiali.org/helm-charts >/dev/null 2>&1 || true
 	@helm repo update kiali >/dev/null
-	@# In observability, not istio-system: it is a console beside Grafana over
-	@# the same Prometheus, in the namespace whose NetworkPolicy already opens
-	@# that path. No --set for the same reason as istiod — values live in the
-	@# file or they stop describing what runs.
+	@# In observability, not istio-system: the NetworkPolicy that opens the path to
+	@# Prometheus is the one on this namespace.
 	@helm upgrade --install kiali kiali/kiali-server \
 		-n observability --version $(KIALI_VERSION) \
 		-f platform/addons/kiali/local/values.yaml \
 		--wait --timeout 5m
-	@# The v is stripped, not carried in KIALI_VERSION: the pin reads cleaner
-	@# unprefixed everywhere else it is printed.
 	@./platform/scripts/check-version.sh kiali $(KIALI_VERSION) \
 		"$$(kubectl -n observability get deploy kiali \
 			-o jsonpath='{.spec.template.spec.containers[0].image}' | sed 's/.*://; s/^v//')"
-	@# The host the route answers on has to be in the certificate or the
-	@# browser turns the console into a TLS warning that reads as a broken
-	@# install. Re-applying the manifest is idempotent — cert-manager sees the
-	@# added dnsName and re-issues — and the wait holds this target until it
-	@# has, because a route programmed against the old certificate fails on
-	@# first visit with nothing saying why.
+	@# The host the route answers on has to be in the certificate or the browser
+	@# turns the console into a TLS warning that reads as a broken install. The
+	@# wait blocks on a fresh cluster, where no Secret exists yet; on a re-run it
+	@# can return on the previous Ready and the reissue lands a moment later.
 	@kubectl apply -f $(MANIFESTS)/addons/traefik/certificate.yaml
 	@kubectl -n traefik wait --for=condition=Ready certificate/platform-tls --timeout=120s
-	@# Same point in the flow as the grafana route in observability: the
-	@# console exists, the edge knows its host, the two meet here.
 	@kubectl apply -f $(MANIFESTS)/addons/kiali/route.yaml
 
 ## namespaces: create the namespaces everything else lands in
@@ -524,9 +506,6 @@ up: cluster cilium gateway traefik-dashboard hubble istio images
 	@# do not depend on it: the OTel SDK logs an export failure and carries on,
 	@# so a missing collector costs telemetry, not availability.
 	@$(MAKE) --no-print-directory observability
-	@# Kiali right after: its whole surface is the metrics the stack just
-	@# started collecting, and before apps there is nothing for it to graph
-	@# yet — only the mesh itself, which is exactly the first view wanted.
 	@$(MAKE) --no-print-directory kiali
 	@# Before apps, not after: once a service is a Rollout, its chart fails to
 	@# render against a cluster where the CRD is not registered yet.
@@ -571,6 +550,10 @@ test:
 test-routing:
 	@./tests/routing.sh
 
+## test-route-isolation: every console host is answered by its own backend, never by a storefront route
+test-route-isolation:
+	@./tests/route-isolation.sh
+
 ## test-mesh: cilium is the cni and a pod with no rule is refused the database
 test-mesh:
 	@./tests/mesh.sh
@@ -609,5 +592,5 @@ down:
 
 .PHONY: help cluster cilium istio kiali namespaces gateway-api traefik tls gateway traefik-dashboard hubble secrets app-secrets \
         sql data images observability rollouts argocd gitops-bootstrap apps up verify down \
-        test test-routing test-mesh test-istio test-auth test-checkout test-resilience test-tls \
+        test test-routing test-route-isolation test-mesh test-istio test-auth test-checkout test-resilience test-tls \
         test-o11y test-journey

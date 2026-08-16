@@ -1,26 +1,25 @@
-# Routing.
+# A backendRef is namespace-local, so this route sits in the namespace of the
+# Service it names. Cross-namespace needs a ReferenceGrant beside it, and
+# without one the route attaches and answers 500 while the Gateway still
+# reports Accepted.
 #
-# HTTPRoutes live in the app namespace beside the service they expose: platform
-# owns the Gateway, app teams own their routes.
+# A route of its own, rather than a rule inside the api route, so a frontend
+# canary can shift weights without touching backend routing.
 #
-# The most specific prefix wins, so / must be last.
-#
-# The three routes now sit in two namespaces, which does not change that: the
-# spec ranks matches by the number of characters in the path first, and only
-# falls back to creation time and namespace/name when two matches tie. /api/auth
-# beats / wherever each route lives. A backendRef, though, is namespace-local —
-# each route has to be in the namespace of the Service it names or the ref needs
-# a ReferenceGrant beside it, and without one the route attaches and answers 500
-# with the Gateway still reporting Accepted.
-#
-# Everything else is the UI. A separate route so a frontend canary can shift
-# weights without touching backend routing.
+# hostnames confines that catch-all to the storefront origin. Traefik ranks
+# routers by path length and gives the host almost no weight, so without it this
+# / attaches to every console host on the Gateway — grafana, argocd, kiali,
+# hubble — and competes with the route each of them owns. Gateway API ranks
+# matching hostname characters first and path only as the tie-break; this line
+# is for Traefik's ranking, not the spec's.
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
   name: web-ui
   namespace: web
 spec:
+  hostnames:
+    - localhost
   parentRefs:
     - name: platform
       namespace: traefik
