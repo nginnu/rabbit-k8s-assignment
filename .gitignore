@@ -61,3 +61,6 @@ coverage.out
 .idea/
 .vscode/
 .zcode/
+
+# GUI-test evidence (browser screenshots) — session artifacts, not source.
+gui-test-screenshots/
