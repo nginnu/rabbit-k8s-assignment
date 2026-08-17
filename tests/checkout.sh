@@ -90,7 +90,7 @@ section "4. pay"
 # amount is not sent: the server derives it from products.price joined on the
 # order, not from whatever the client posts. See the negative case below,
 # which is the actual proof of that.
-payment=$(body POST /api/payments "{\"order_id\":$order_id}" "$token")
+payment=$(body POST /api/payments "{\"order_id\":$order_id,\"method\":\"card\"}" "$token")
 payment_id=$(printf '%s' "$payment" | json "d['payment_id']")
 gateway_ref=$(printf '%s' "$payment" | json "d['gateway_ref']")
 
@@ -135,7 +135,7 @@ forge_order_id=$(printf '%s' "$forge_order" | json "d['id']")
 if [ -n "$forge_order_id" ]; then
   ok "second order $forge_order_id created for the forgery attempt"
 
-  forge_payment=$(body POST /api/payments "{\"order_id\":$forge_order_id,\"amount\":1}" "$token")
+  forge_payment=$(body POST /api/payments "{\"order_id\":$forge_order_id,\"amount\":1,\"method\":\"card\"}" "$token")
   forge_payment_id=$(printf '%s' "$forge_payment" | json "d['payment_id']")
 
   if [ -n "$forge_payment_id" ]; then
