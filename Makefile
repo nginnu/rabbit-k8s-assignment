@@ -430,7 +430,7 @@ ARGOCD_VERSION     := 10.3.2
 # rollouts, the chart version is not recoverable from the Deployment.
 ARGOCD_APP_VERSION := v3.5.0
 
-## argocd: install the Argo CD control plane, served at /argocd
+## argocd: install the Argo CD control plane, served at https://argocd.localhost
 argocd: namespaces
 	@helm repo add argo https://argoproj.github.io/argo-helm >/dev/null 2>&1 || true
 	@helm repo update argo >/dev/null

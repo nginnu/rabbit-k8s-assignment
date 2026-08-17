@@ -1,5 +1,10 @@
 # ArgoCD — auto-sync and selfHeal on dummy
 
+> The experiments below ran against `dummy`, which has since been replaced
+> by `notification` as the Argo CD-managed service. The transcripts and
+> screenshots are the record of what ran at the time; repeat them against
+> `notification` for the same proofs.
+
 **Date:** 2026-08-10
 **Status:** two cases proven (auto-sync, selfHeal); dummy only — TODO box stays
 unticked, App of Apps and the other five services not started
@@ -20,6 +25,12 @@ unticked, App of Apps and the other five services not started
 - `09-argocd-route.yaml` carries **no** URLRewrite filter, unlike the Grafana
   route — rewriting to `/` would leave the server looking for `/argocd` in a
   request that no longer has it
+
+**Update 2026-08-17:** host-based routing replaced this setup in `543fe6b`
+(2026-08-14) — Argo CD is served at `https://argocd.localhost`, the
+`rootpath`/`basehref` pair is gone, and the route matches the host instead of
+the path. Everything above describes the path-based setup as it stood on
+2026-08-10.
 
 **Scope — one Application** (`platform/manifests/10-argocd-apps.yaml`)
 

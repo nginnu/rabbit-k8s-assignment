@@ -16,15 +16,24 @@ browser
   ▼
 Istio gateway
   ├── /api/auth      ──▶ auth-svc      ──▶ MariaDB, Redis (sessions)
-  ├── /api/products  ──▶ order-svc     ──▶ MariaDB
+  ├── /api/products  ──▶ catalog-svc    ──▶ MariaDB, Redis (product cache)
   ├── /api/orders    ──▶ order-svc     ──▶ MariaDB
-  ├── /api/payments  ──▶ payment-svc   ──▶ order-svc, payment-gateway, MariaDB
-  ├── /dummy         ──▶ dummy
+  ├── /api/payments  ──▶ payment-svc   ──▶ order-svc, payment-gateway,
+  │                                    notification, MariaDB
+  ├── /notification  ──▶ notification (prefix stripped)
   └── /              ──▶ web-ui (Next.js)
 
-payment-gateway  — no route, stands in for an external bank. payment-svc calls
-                it at http://payment-gateway.demo.svc.cluster.local; nothing
-                outside the mesh can reach it directly.
+payment-gateway — no route, stands in for an external bank. payment-svc calls
+                it in-cluster; nothing outside the mesh can reach it directly.
+
+notification    — /notification (prefix stripped). payment-svc POSTs /notify
+                after a settle; /notify-failed simulates a broken provider,
+                /chaos/* steers failure at runtime. Own telemetry (OTLP push),
+                in-memory store capped at 100 for the checkout proof.
+
+catalog-svc     — split out of order-svc: the product list and its Redis
+                cache-aside. order-svc keeps the lifecycle; catalog is the
+                storefront's hottest read.
 
 platform-config — no route, no pod. Renders one ConfigMap, `app-config`, that
                    the six services above mount for shared env: DEPLOYMENT_ENV,
@@ -47,9 +56,12 @@ nobody's value to set from inside their own chart. Not a seventh service.
 ## Rollout and GitOps
 
 - **order-svc** — Argo Rollout, canary 50% weight (pod-count split, `replicas: 2`), gated by an AnalysisTemplate on Prometheus success-rate ≥0.95
-- **dummy** — only service under Argo CD (`/argocd`), `prune`+`selfHeal` on; the rest stay on `helm upgrade`
+- **notification** — only service under Argo CD (`/argocd`), `prune`+`selfHeal` on; the rest stay on `helm upgrade`
 - **Grafana** — `/grafana`, prefix stripped
 - **Argo CD** — `/argocd`, prefix kept (its own `rootpath`/`basehref` expect it)
+- **Update 2026-08-17:** host-based routing (`543fe6b`) moved both to their own
+  hostnames — `https://grafana.localhost`, `https://argocd.localhost` — nothing
+  is path-routed any more
 
 ---
 
@@ -101,13 +113,13 @@ service out of rotation on one database blip.
 | liveness (auth/order/payment/payment-gateway) | `/healthz` | 10s | 15s | too short restarts a pod that's merely slow to start; too long leaves a stuck pod serving errors |
 | readiness (same four) | `/healthz` | 5s | 5s | too aggressive routes traffic to a pod before it can actually answer |
 | web-ui | `/` (no `/healthz` in Next.js) | 10s / 5s | 15s / 5s | same as above |
-| dummy | `/healthz`, `/readyz` split | 0s / 0s | 10s / 5s | exists only to demonstrate the split — no real dependency to guard |
+| notification | `/healthz`, `/readyz` split | 0s / 0s | 10s / 5s | the split carried over from dummy; ready immediately, no dependency to wait for |
 
 Template defaults (`_deployment-rollout.tpl`):
 
 - `timeoutSeconds: 3` — Kubernetes' default 1s fails a pod that's merely busy
 - `hasKey`, not `default`, for delays — `default 10` would rewrite an explicit
-  `initialDelaySeconds: 0` (dummy) into a 10s wait, since Go templates treat
+  `initialDelaySeconds: 0` (notification) into a 10s wait, since Go templates treat
   `0` as empty
 
 `/healthz` is registered before any middleware — no auth, no fail injection.
@@ -125,7 +137,7 @@ packs against, limits stop one service starving the node. Set per
 | Tier | requests | limits | What breaks if wrong |
 |---|---|---|---|
 | auth / order / payment / web-ui | 50m, 96–128Mi | 500m, 384–512Mi | requests too low overpacks the node; limits too low OOM-kills a Go service under load instead of throttling it |
-| payment-gateway, dummy | 20m, 32–64Mi | 200m, 128–256Mi | same failure mode, lower stakes — nothing depends on these staying up |
+| payment-gateway, notification | 20m, 32–64Mi | 200m, 128–256Mi | same failure mode, lower stakes — checkout survives either being down |
 
 CPU limits run ~10× requests (idle, then spike on a request); memory ~4× (a
 Go service that exceeds it gets OOM-killed, not throttled).
