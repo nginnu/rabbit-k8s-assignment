@@ -18,12 +18,42 @@ WORKING-RULES.md
 .github/copilot-instructions.md
 
 # Credentials — never commit
+# `kubeconfig*` and `.env*` are single patterns on purpose: the earlier
+# `kubeconfig` + `kubeconfig-*` pair missed `kubeconfig.yaml`, and `.env` +
+# `.env.*` missed `.envrc`. A credentials pattern that covers every name but
+# one is the same as not having it.
 *.pem
 *.key
-kubeconfig
-kubeconfig-*
-.env
-.env.*
+kubeconfig*
+.env*
+
+# Node / Next.js build output — reinstalled by `npm ci` and rebuilt by
+# `next build`, so nothing here is worth a commit. Unignored, `node_modules/`
+# collapses to a single `??` line in `git status`, which is how tens of
+# thousands of files get in behind one `git add -A` without looking like much.
+# Not anchored to apps/web-ui: a second frontend would hit this the same way.
+node_modules/
+.next/
+.turbo/
+npm-debug.log*
+# `output: "export"` writes the static site to `out/` instead of `.next/`.
+# Anchored under apps/ so a real directory named `out` elsewhere in the repo
+# does not silently disappear from git.
+/apps/*/out/
+
+# Go binaries built on the host — `go build ./cmd/payment` without `-o` drops a
+# ~40 MB executable beside go.mod, named after the package. Every path is
+# spelled out because a bare `payment` would also match
+# `apps/services/cmd/payment/`, hiding the source the binary was built from.
+# A new service under cmd/ needs its name added here.
+/apps/services/auth
+/apps/services/catalog
+/apps/services/order
+/apps/services/payment
+/apps/notification/notification
+# `go test -c` leaves a `<pkg>.test` binary; `-coverprofile` leaves the profile.
+*.test
+coverage.out
 
 # OS / editor
 .DS_Store
