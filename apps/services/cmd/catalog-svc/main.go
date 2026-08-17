@@ -1,5 +1,7 @@
-// Package main — order-svc entry point.
-// Listens on APP_PORT (default 9002), graceful shutdown on SIGINT/SIGTERM.
+// Package main — catalog-svc entry point: the product list, split out of
+// order-svc so the read path (browse) and the write path (order, settle) scale
+// and fail independently. Listens on APP_PORT (default 9004), graceful
+// shutdown on SIGINT/SIGTERM.
 package main
 
 import (
@@ -14,9 +16,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"github.com/nginnu/rabbit-k8s-assignment/apps/services/internal/order/handler"
-	"github.com/nginnu/rabbit-k8s-assignment/apps/services/internal/order/repository"
-	"github.com/nginnu/rabbit-k8s-assignment/apps/services/internal/order/usecase"
+	"github.com/nginnu/rabbit-k8s-assignment/apps/services/internal/catalog/handler"
+	"github.com/nginnu/rabbit-k8s-assignment/apps/services/internal/catalog/repository"
+	"github.com/nginnu/rabbit-k8s-assignment/apps/services/internal/catalog/usecase"
 	"github.com/nginnu/rabbit-k8s-assignment/apps/services/internal/shared/config"
 	"github.com/nginnu/rabbit-k8s-assignment/apps/services/internal/shared/db"
 	"github.com/nginnu/rabbit-k8s-assignment/apps/services/internal/shared/logger"
@@ -26,12 +28,12 @@ import (
 )
 
 // serviceShortName must match the Deployment name in
-// charts/apps/order-svc/values.yaml — it feeds cfg.ServiceName(), which
+// charts/apps/catalog-svc/values.yaml — it feeds cfg.ServiceName(), which
 // becomes the OTel service.name resource attribute and, after
 // resource_to_telemetry_conversion in Alloy, the service_name label that SLO
 // alert queries match on. A mismatch here makes those queries return zero
-// series with no error (see notes/slo-strategy.md).
-const serviceShortName = "order-svc"
+// series with no error.
+const serviceShortName = "catalog-svc"
 
 func main() {
 	ctx := context.Background()
@@ -54,10 +56,24 @@ func main() {
 		os.Exit(1)
 	}
 
-	// No Redis since the catalog split: the product cache-aside that used it
-	// moved to catalog-svc, and nothing else in the order lifecycle caches.
+	// Redis is not critical here: ListProducts is cache-aside and falls through to
+	// MariaDB on error, and the write-back is best effort. Losing Redis is slower,
+	// not broken, so this must not exit.
+	redisClient, err := db.OpenRedis(cfg)
+	if err != nil {
+		// A failure here is a bug in our instrumentation, not a dead Redis.
+		log.Error("redis client init failed", "err", err)
+		os.Exit(1)
+	}
+	defer redisClient.Close()
+
+	if err := db.PingRedis(redisClient); err != nil {
+		log.Warn("redis unreachable at startup — continuing with DB-only reads",
+			"err", err, "impact", "product list served from MariaDB; higher latency")
+	}
+
 	repo := repository.New(gormDB)
-	uc := usecase.New(repo)
+	uc := usecase.New(repo, usecase.NewRedisCache(redisClient))
 	h := handler.New(uc)
 
 	gin.SetMode(gin.ReleaseMode)
@@ -70,10 +86,6 @@ func main() {
 
 	// Business routes: full observability stack
 	r.Use(middleware.OTel(cfg.ServiceName(serviceShortName)))
-	// FailInjector must come after OTel: otelgin records status from
-	// c.Writer.Status() once c.Next() returns, so a 500 written here still
-	// lands in http_server_request_duration_seconds_count with that code.
-	r.Use(middleware.FailInjector(cfg.FailRate))
 	r.Use(middleware.TraceResponseHeader())
 	r.Use(middleware.BaggageToSpan()) // copy baggage (from upstream service) → span attr
 	r.Use(middleware.RequestLogger())
@@ -82,20 +94,12 @@ func main() {
 	public := r.Group("/")
 	public.Use(middleware.Auth(cfg))
 	{
-		public.POST("/orders", h.CreateOrder)
-		public.GET("/orders", h.ListOrders)
-	}
-
-	// Internal routes (no auth — called by payment-svc on docker network)
-	internal := r.Group("/internal")
-	{
-		internal.GET("/orders/:id", h.GetOrderInternal)
-		internal.PATCH("/orders/:id", h.UpdateOrderInternal)
+		public.GET("/products", h.ListProducts)
 	}
 
 	port := os.Getenv("APP_PORT")
 	if port == "" {
-		port = "9002"
+		port = "9004"
 	}
 
 	srv := &http.Server{

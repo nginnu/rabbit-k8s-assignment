@@ -1,16 +1,12 @@
 // Package domain defines the core entities and interfaces for the order bounded context.
+// The product list moved to catalog-svc with the split; Product stays because
+// order creation still checks the product exists before inserting.
 package domain
 
 import (
 	"context"
-	"errors"
 	"time"
 )
-
-// ErrCacheMiss is what a ProductCache returns on a miss. The sentinel lives
-// here rather than exposing go-redis's redis.Nil through the interface: the
-// usecase decides what a miss means, the adapter decides how Redis says it.
-var ErrCacheMiss = errors.New("cache miss")
 
 // OrderStatus represents the state of an order.
 type OrderStatus string
@@ -63,20 +59,13 @@ type UpdateStatusRequest struct {
 }
 
 // OrderRepository abstracts order + product persistence. The gorm
-// implementation is internal/order/repository.
+// implementation is internal/order/repository. Listing products is not here:
+// that read path belongs to catalog-svc since the split — this context only
+// touches products to validate an order's product_id.
 type OrderRepository interface {
-	ListProducts(ctx context.Context) ([]Product, error)
 	CheckProductAvailability(ctx context.Context, productID string) (*Product, error)
 	CreateOrderTx(ctx context.Context, order *Order) error
 	ListByUserID(ctx context.Context, userID int) ([]Order, error)
 	FindByID(ctx context.Context, id int) (*Order, error)
 	UpdateStatus(ctx context.Context, id int, status OrderStatus) (*Order, error)
-}
-
-// ProductCache abstracts the product-list cache. GetBytes returns
-// ErrCacheMiss on a miss; any other error means the cache is unreachable and
-// the caller falls through to the database.
-type ProductCache interface {
-	GetBytes(ctx context.Context, key string) ([]byte, error)
-	Set(ctx context.Context, key string, value []byte, ttl time.Duration) error
 }

@@ -26,20 +26,9 @@ func New(db *gorm.DB) *OrderRepository {
 	return &OrderRepository{db: db}
 }
 
-// ListProducts returns all products (Premier League jerseys).
-// Custom span: repo.product.list
-func (r *OrderRepository) ListProducts(ctx context.Context) ([]domain.Product, error) {
-	ctx, span := tracer.Start(ctx, "read products")
-	defer span.End()
-
-	var products []domain.Product
-	if err := r.db.WithContext(ctx).Order("id").Find(&products).Error; err != nil {
-		span.RecordError(err)
-		return nil, fmt.Errorf("list products: %w", err)
-	}
-	span.SetAttributes(attribute.Int("product.count", len(products)))
-	return products, nil
-}
+// ListProducts is gone with the split: catalog-svc owns the product read
+// path. The table is still queried below, but only inside order creation to
+// validate the product_id before the insert.
 
 // CheckProductAvailability verifies a product exists by ID.
 // Custom span: check availability

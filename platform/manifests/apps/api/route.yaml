@@ -42,7 +42,7 @@ spec:
           urlRewrite:
             path: { type: ReplacePrefixMatch, replacePrefixMatch: /products }
       backendRefs:
-        - name: order-svc
+        - name: catalog-svc
           port: 80
 
     - matches:

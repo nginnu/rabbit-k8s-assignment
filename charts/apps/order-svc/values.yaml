@@ -52,7 +52,9 @@ services:
       # well as a destination. Both halves of that cycle have to be written or
       # the callback is dropped at whichever side is missing.
       ingress: [gateway, svc:payment-svc]
-      egress: [svc:payment-svc, mariadb, redis, alloy]
+      # No redis since the catalog split: the product cache-aside that used
+      # it moved to catalog-svc, and nothing else here caches.
+      egress: [svc:payment-svc, mariadb, alloy]
 
     rollout:
       strategy:

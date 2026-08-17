@@ -15,7 +15,8 @@ import (
 	"gorm.io/gorm"
 )
 
-// OrderHandler exposes order + product endpoints.
+// OrderHandler exposes order endpoints. GET /products moved to catalog-svc
+// with the split; the route in front of this service now only carries orders.
 type OrderHandler struct {
 	uc *usecase.OrderUsecase
 }
@@ -23,19 +24,6 @@ type OrderHandler struct {
 // New creates a new OrderHandler.
 func New(uc *usecase.OrderUsecase) *OrderHandler {
 	return &OrderHandler{uc: uc}
-}
-
-// ListProducts handles GET /products (JWT required).
-// Used by web-ui to show product grid (Premier League jerseys).
-func (h *OrderHandler) ListProducts(c *gin.Context) {
-	ctx := c.Request.Context()
-	products, err := h.uc.ListProducts(ctx)
-	if err != nil {
-		slog.ErrorContext(ctx, "list products failed", "error", err.Error())
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-		return
-	}
-	c.JSON(http.StatusOK, products)
 }
 
 // CreateOrder handles POST /orders (JWT required).
