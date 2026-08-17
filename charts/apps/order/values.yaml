@@ -1,4 +1,4 @@
-# order-svc
+# order
 
 namespace: api
 
@@ -9,9 +9,9 @@ sharedSecret:
   name: app-secrets
 
 services:
-  order-svc:
+  order:
     image:
-      repository: order-svc
+      repository: order
       tag: v0.1.0
       pullPolicy: Never
     port: 9002
@@ -26,10 +26,8 @@ services:
       limits:   { cpu: 500m, memory: 384Mi }
     env:
       - { name: APP_PORT, value: "9002" }
-      # No PAYMENT_SVC_URL: order-svc opens no outbound HTTP at all — payment-svc
-      # calls it, not the other way round. Left set, it read as a live dependency
-      # and the next person to trace the call graph would look for a caller that
-      # does not exist.
+      - { name: PAYMENT_GATEWAY_URL, value: "http://payment.api.svc.cluster.local" }
+      - { name: NOTIFICATION_URL, value: "http://notification.api.svc.cluster.local" }
       # Fraction of business requests answered with 500. 0 is off; raise it to
       # deploy a build that passes /healthz but serves errors, which is what a
       # canary has to catch and a crashing pod does not.
@@ -48,16 +46,11 @@ services:
 
     networkPolicy: true
     networkPolicyPeers:
-      # payment-svc calls back here to settle an order, so it is a client as
-      # well as a destination. Both halves of that cycle have to be written or
-      # the callback is dropped at whichever side is missing.
-      ingress: [gateway, svc:payment-svc]
-      # No redis since the catalog split: the product cache-aside that used
-      # it moved to catalog, and nothing else here caches. No payment-svc
-      # either — the cycle above is one-way at the connection level, and a
-      # NetworkPolicy is connection-tracked, so payment-svc's replies come back
-      # on the ingress rule and need no egress of their own.
-      egress: [mariadb, alloy]
+      # Edge-facing: the gateway routes requests here.
+      ingress: [gateway]
+      # Calls payment gateway (external charge) and notification (async alert).
+      # No redis: catalog split moved product cache there.
+      egress: [svc:payment, svc:notification, mariadb, alloy]
 
     rollout:
       strategy:
@@ -68,7 +61,7 @@ services:
             - setWeight: 50
             - analysis:
                 templates:
-                  - templateName: order-svc-success-rate
+                  - templateName: order-success-rate
             - setWeight: 100
 
       analysis:

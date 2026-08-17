@@ -12,7 +12,9 @@ import (
 	"gorm.io/gorm"
 )
 
-var tracer = otel.Tracer("payment-svc")
+// Named to match the order package's <context>/<layer> convention now that
+// there is no standalone payment-svc process for "payment-svc" to refer to.
+var tracer = otel.Tracer("payment/repository")
 
 // PaymentRepo wraps gorm DB for the payments table.
 type PaymentRepo struct {

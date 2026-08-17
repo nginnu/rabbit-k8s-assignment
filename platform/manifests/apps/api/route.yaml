@@ -52,7 +52,7 @@ spec:
           urlRewrite:
             path: { type: ReplacePrefixMatch, replacePrefixMatch: /orders }
       backendRefs:
-        - name: order-svc
+        - name: order
           port: 80
 
     - matches:
@@ -62,12 +62,12 @@ spec:
           urlRewrite:
             path: { type: ReplacePrefixMatch, replacePrefixMatch: /payments }
       backendRefs:
-        - name: payment-svc
+        - name: order
           port: 80
 
 # No rule for notification, deliberately. It served /chaos/error-rate and
 # /chaos/latency on the same public listener as the storefront, unauthenticated,
 # so anyone reaching https://localhost could raise a running service's injected
-# failure rate. payment-svc is its only caller and reaches it over ClusterIP;
+# failure rate. order is its only caller and reaches it over ClusterIP;
 # exercising the canary or /notify-failed by hand is a `kubectl exec` or a
 # port-forward now, not a curl from the host.

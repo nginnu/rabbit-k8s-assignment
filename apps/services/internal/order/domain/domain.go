@@ -53,16 +53,6 @@ type OrderResponse struct {
 	Status    OrderStatus `json:"status"`
 }
 
-// UpdateStatusRequest is the body for PATCH /internal/orders/:id.
-//
-// oneof pins the value to the three the ENUM column accepts. Without it, any
-// string clears binding and reaches gorm, which turns a bad caller input into
-// a 500 instead of a 400 — the ENUM rejects it, but at the DB, past the point
-// a client error should have been caught.
-type UpdateStatusRequest struct {
-	Status OrderStatus `json:"status" binding:"required,oneof=pending paid cancelled"`
-}
-
 // OrderRepository abstracts order + product persistence. The gorm
 // implementation is internal/order/repository. Listing products is not here:
 // that read path belongs to catalog since the split — this context only

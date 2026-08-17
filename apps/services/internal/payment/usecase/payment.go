@@ -17,13 +17,15 @@ import (
 	"go.opentelemetry.io/otel/codes"
 )
 
-var tracer = otel.Tracer("payment-svc")
+// Named to match the order package's <context>/<layer> convention now that
+// there is no standalone payment-svc process for "payment-svc" to refer to.
+var tracer = otel.Tracer("payment/usecase")
 
 // ProcessPaymentInput is the input for ProcessPayment.
 //
 // There is deliberately no Amount field. The price the client saw when it
-// posted this request is not trusted for anything: order-svc's Validate
-// call below is the only source ProcessPayment reads a price from.
+// posted this request is not trusted for anything: order's Validate call
+// below is the only source ProcessPayment reads a price from.
 type ProcessPaymentInput struct {
 	OrderID int
 	UserID  int
@@ -40,9 +42,10 @@ type ProcessPaymentOutput struct {
 // The four dependencies as interfaces, defined here on the consumer side
 // rather than in domain: ChargeGateway's signature carries gateway.ChaosHeaders,
 // and domain cannot import gateway without a cycle (gateway already imports
-// domain for its DTOs). The concrete gorm repository and HTTP clients satisfy
-// these without knowing they exist; tests supply fakes that record calls, which
-// is how the saga asserts step order, not just outcomes.
+// domain for its DTOs). The concrete gorm repository, the in-process order
+// adapter, and the HTTP clients satisfy these without knowing they exist;
+// tests supply fakes that record calls, which is how the saga asserts step
+// order, not just outcomes.
 type (
 	// PaymentRepository persists the payments table.
 	PaymentRepository interface {
@@ -51,7 +54,8 @@ type (
 		FindByID(ctx context.Context, id int) (*domain.Payment, error)
 	}
 
-	// OrderGateway is the order-svc internal API.
+	// OrderGateway is order's usecase, called in-process — see
+	// internal/payment/gateway/order_adapter.go.
 	OrderGateway interface {
 		Validate(ctx context.Context, orderID int) (*domain.OrderInfo, error)
 		MarkPaid(ctx context.Context, orderID int) error
@@ -88,8 +92,9 @@ func New(repo PaymentRepository, order OrderGateway, charge ChargeGateway, notif
 
 // ProcessPayment runs the full payment flow per PLAN section 9.3.
 func (u *PaymentUsecase) ProcessPayment(ctx context.Context, in ProcessPaymentInput) (*ProcessPaymentOutput, error) {
-	// order.id goes into baggage before the span is created, so order-svc and
-	// payment-gateway pick it up through otelhttp without being told.
+	// order.id goes into baggage before the span is created, so payment-gateway
+	// picks it up through otelhttp without being told; the in-process order
+	// adapter needs no such propagation, it reads in.OrderID directly.
 	ctx = withOrderBaggage(ctx, in.OrderID)
 
 	ctx, span := tracer.Start(ctx, "process payment")
@@ -105,7 +110,7 @@ func (u *PaymentUsecase) ProcessPayment(ctx context.Context, in ProcessPaymentIn
 		"user_id", in.UserID,
 	)
 
-	// Step 1: Validate order exists and is pending. order-svc's response is
+	// Step 1: Validate order exists and is pending. order's response is
 	// also where the price comes from — info.Amount, derived server-side
 	// from products.price, is what every later step charges. Nothing in
 	// ProcessPaymentInput can override it because nothing in it carries a
@@ -177,7 +182,7 @@ func (u *PaymentUsecase) ProcessPayment(ctx context.Context, in ProcessPaymentIn
 		"gateway_ref", chargeResult.Ref,
 	)
 
-	// Step 5: Mark order as paid in order-svc.
+	// Step 5: Mark order as paid.
 	if err := u.order.MarkPaid(ctx, in.OrderID); err != nil {
 		// Non-fatal: payment succeeded, order update is best-effort.
 		span.SetStatus(codes.Error, err.Error())
@@ -241,11 +246,12 @@ func withOrderBaggage(ctx context.Context, orderID int) context.Context {
 // GetPayment loads a payment for the confirmation step.
 //
 // Ownership is not enforced here and deliberately so: payments carry no
-// user_id, and order-svc's internal API returns only id and status, so there is
-// nothing to check against. Any authenticated user could read another's receipt
-// by guessing an id. Acceptable for a lab, unacceptable in production — closing
-// it needs order-svc to expose the owning user, which is a change to that
-// service's contract rather than something payments can fix alone.
+// user_id, and order's Validate call returns only id, status, and amount, so
+// there is nothing to check against. Any authenticated user could read
+// another's receipt by guessing an id. Acceptable for a lab, unacceptable in
+// production — closing it needs domain.OrderInfo to carry the owning user,
+// which is a change to order's contract rather than something payments can
+// fix alone.
 func (u *PaymentUsecase) GetPayment(ctx context.Context, paymentID, userID int) (*domain.Payment, error) {
 	ctx, span := tracer.Start(ctx, "confirm checkout")
 	defer span.End()

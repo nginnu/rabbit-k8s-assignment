@@ -28,7 +28,7 @@ func New(repo domain.OrderRepository) *OrderUsecase {
 
 // CreateOrder validates input, checks product availability, and inserts an
 // order. It also returns the product's price: orders carries no amount
-// column, so the price payment-svc will later charge is resolved here, from
+// column, so the price payment will later charge is resolved here, from
 // the same CheckProductAvailability call that already guards the insert,
 // and handed to the caller rather than recomputed a second time.
 // Custom span: create order
@@ -68,8 +68,9 @@ func (u *OrderUsecase) ListUserOrders(ctx context.Context, userID int) ([]domain
 
 // GetOrder returns a single order by ID together with the price of the
 // product it references. There is no orders.amount column — this is the
-// join payment-svc's GET /internal/orders/:id call relies on to learn what
-// to charge, same as CreateOrder above.
+// join payment's OrderAdapter relies on (in-process, see
+// internal/payment/gateway/order_adapter.go) to learn what to charge, same
+// as CreateOrder above.
 func (u *OrderUsecase) GetOrder(ctx context.Context, id int) (*domain.Order, float64, error) {
 	o, err := u.repo.FindByID(ctx, id)
 	if err != nil {

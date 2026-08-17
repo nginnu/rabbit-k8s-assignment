@@ -55,7 +55,7 @@ spec:
                 # MARIADB_DSN and panics without it, but cmd/payment/main.go
                 # never calls db.OpenMariaDB — the Secret satisfies that, not a
                 # network path. An allow here would carry no traffic.
-                values: [auth, catalog, order-svc, payment-svc]
+                values: [auth, catalog, order]
       ports:
         - protocol: TCP
           port: 3306
@@ -157,11 +157,10 @@ spec:
             matchExpressions:
               - key: app.kubernetes.io/name
                 operator: In
-                # payment-svc is absent deliberately: cmd/payment-svc/main.go
-                # calls db.OpenMariaDB and never db.OpenRedis. Since the catalog
-                # split the cache-aside lives in catalog, and order-svc no
-                # longer opens Redis either — auth (sessions) and catalog
-                # (products) are the two that do.
+                # order is absent deliberately. It calls db.OpenMariaDB and never
+                # db.OpenRedis. Since the catalog split the cache-aside lives in
+                # catalog, and order no longer opens Redis either — auth (sessions)
+                # and catalog (products) are the two that do.
                 values: [auth, catalog]
       ports:
         - protocol: TCP

@@ -33,9 +33,9 @@ type ChargeResult struct {
 	Error  string `json:"error,omitempty"`
 }
 
-// OrderInfo is a subset of order data returned by order-svc internal API.
+// OrderInfo is a subset of order data returned by OrderGateway.Validate.
 //
-// Amount is order-svc's word on what the order costs — derived from
+// Amount is order's word on what the order costs — derived from
 // products.price, never from the client. ProcessPayment charges this value
 // and this value alone; nothing the caller sends can move it.
 type OrderInfo struct {

@@ -291,7 +291,7 @@ data: secrets sql
 # build arg) and the image tag its chart pins. A service left off this list
 # still passes check-image-tags.sh — that compares tags, not names — so nothing
 # is built or loaded and the pod sits in ErrImageNeverPull.
-GO_SVCS := auth catalog order-svc payment-svc payment
+GO_SVCS := auth catalog order payment
 
 ## images: build every image and load it into the cluster
 images:
@@ -317,10 +317,10 @@ images:
 # Helm-owned only. A chart that has moved to Argo CD is deleted from these two
 # lists in the same edit that adds it to GITOPS_CHARTS below — see there for
 # what breaks when it stays in both.
-APP_CHARTS := platform-config auth catalog order-svc payment-svc payment web-ui
+APP_CHARTS := platform-config auth catalog order payment web-ui
 
 # platform-config renders only a ConfigMap, so there is nothing to wait on.
-APP_DEPLOYS := auth catalog order-svc payment-svc payment web-ui
+APP_DEPLOYS := auth catalog order payment web-ui
 
 # The charts that have graduated out of the helm loop above and belong to Argo
 # CD now. The migration is one service at a time, so this list grows and

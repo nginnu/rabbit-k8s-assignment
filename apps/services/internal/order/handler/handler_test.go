@@ -21,9 +21,8 @@ import (
 )
 
 // Handler tests go through the real Auth middleware and the real gin binding
-// pipeline (not the usecase directly) so the oneof tag on
-// UpdateStatusRequest.Status and the amount field added to the two JSON
-// responses are proven on the wire, the shape a client actually sees.
+// pipeline (not the usecase directly) so the amount field added to the
+// order responses is proven on the wire, the shape a client actually sees.
 
 const testSecret = "unit-test-secret"
 
@@ -88,8 +87,10 @@ func signedToken(t *testing.T, userID int) string {
 	return tok
 }
 
-// newRouter mounts the same route shape as order-svc's main: public routes
-// behind Auth, internal routes without it.
+// newRouter mounts the same route shape as order's main: /orders behind
+// Auth. /internal/orders/:id is gone with the payment-svc merge — payment
+// reads and updates orders in-process now, through order/usecase directly,
+// not over HTTP — so there is no route left here for it to hit.
 func newRouter(repo *stubRepo) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -99,10 +100,6 @@ func newRouter(repo *stubRepo) *gin.Engine {
 	public := r.Group("/", middleware.Auth(cfg))
 	public.POST("/orders", h.CreateOrder)
 	public.GET("/orders", h.ListOrders)
-
-	internal := r.Group("/internal")
-	internal.GET("/orders/:id", h.GetOrderInternal)
-	internal.PATCH("/orders/:id", h.UpdateOrderInternal)
 	return r
 }
 
@@ -156,78 +153,7 @@ func TestCreateOrderUnknownProductIs422(t *testing.T) {
 	}
 }
 
-func TestGetOrderInternalIncludesAmount(t *testing.T) {
-	repo := &stubRepo{order: &domain.Order{ID: 12, UserID: 1, ProductID: "LIV-H-24", Status: domain.OrderStatusPending}}
-	r := newRouter(repo)
-
-	rec := do(r, http.MethodGet, "/internal/orders/12", "", "")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
-	}
-	var resp struct {
-		Amount float64 `json:"amount"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if resp.Amount != stubPrice {
-		t.Errorf("amount = %v, want %v — payment-svc charges this value verbatim", resp.Amount, stubPrice)
-	}
-}
-
-func TestGetOrderInternalMissingIs404(t *testing.T) {
-	r := newRouter(&stubRepo{})
-
-	rec := do(r, http.MethodGet, "/internal/orders/999", "", "")
-	if rec.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want 404; body: %s", rec.Code, rec.Body.String())
-	}
-}
-
-func TestGetOrderInternalNonNumericIDIs400(t *testing.T) {
-	r := newRouter(&stubRepo{})
-
-	rec := do(r, http.MethodGet, "/internal/orders/abc", "", "")
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
-	}
-}
-
-// The ENUM column behind orders.status turns any other string into a 500 at
-// the DB. The oneof tag on UpdateStatusRequest.Status must catch it first, as
-// a 400, before the request ever reaches gorm.
-func TestUpdateOrderInternalRejectsUnknownStatus(t *testing.T) {
-	repo := &stubRepo{order: &domain.Order{ID: 12, Status: domain.OrderStatusPending}}
-	r := newRouter(repo)
-
-	rec := do(r, http.MethodPatch, "/internal/orders/12", "", `{"status":"shipped"}`)
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400 for a status outside the enum; body: %s", rec.Code, rec.Body.String())
-	}
-	if repo.updated != "" {
-		t.Errorf("repo.UpdateStatus called with %q, want the request rejected before it ran", repo.updated)
-	}
-}
-
-func TestUpdateOrderInternalAcceptsKnownStatus(t *testing.T) {
-	repo := &stubRepo{order: &domain.Order{ID: 12, Status: domain.OrderStatusPending}}
-	r := newRouter(repo)
-
-	rec := do(r, http.MethodPatch, "/internal/orders/12", "", `{"status":"paid"}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
-	}
-	if repo.updated != domain.OrderStatusPaid {
-		t.Errorf("repo updated to %q, want paid", repo.updated)
-	}
-}
-
-func TestUpdateOrderInternalMissingStatusIs400(t *testing.T) {
-	repo := &stubRepo{order: &domain.Order{ID: 12, Status: domain.OrderStatusPending}}
-	r := newRouter(repo)
-
-	rec := do(r, http.MethodPatch, "/internal/orders/12", "", `{}`)
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
-	}
-}
+// GetOrder and UpdateOrderStatus (the usecase methods /internal/orders/:id
+// used to front) are proven directly in usecase_test.go and, through
+// OrderAdapter, in internal/payment/gateway/order_adapter_test.go — the HTTP
+// route itself no longer exists for a handler test to hit.

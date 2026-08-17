@@ -197,7 +197,7 @@ spec:
     # The Prometheus metric provider runs the query in-process from the Argo
     # Rollouts controller pod — there is no AnalysisRun pod — so the source is
     # the argo-rollouts namespace, not api, even though the AnalysisRun object
-    # lives in api alongside order-svc.
+    # lives in api alongside order.
     #
     # Leaving this out does not fail the canary outright: it scores as a
     # provider Error, and with consecutiveErrorLimit 2 the rollout aborts on a
