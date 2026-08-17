@@ -4,12 +4,14 @@
 #
 #   ./tests/run-all.sh
 #
-# Ordered cheapest first: routing before checkout, and resilience last because
-# it deletes pods and takes minutes.
+# Ordered cheapest first: unit.sh runs before everything else because it needs
+# no cluster — pure host-side go test, so it fails fast before anything touches
+# the cluster. Then routing before checkout, and resilience last because it
+# deletes pods and takes minutes.
 
 cd "$(dirname "$0")" || exit 1
 
-SUITES="routing.sh route-isolation.sh mesh.sh istio.sh auth.sh checkout.sh o11y-stack.sh o11y-journey.sh tls-proof.sh resilience.sh"
+SUITES="unit.sh routing.sh route-isolation.sh mesh.sh istio.sh auth.sh checkout.sh o11y-stack.sh o11y-journey.sh tls-proof.sh resilience.sh"
 
 failed=""
 for suite in $SUITES; do

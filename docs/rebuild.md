@@ -31,9 +31,9 @@ cluster ──→ gateway ──→ traefik-dashboard ──→ images ──→
 services do not depend on it — the OTel SDK logs a failed export and carries on,
 so a missing collector costs telemetry, not availability.
 
-`gitops-bootstrap` hands `dummy` to Argo CD after `apps`, never before —
-applied first, Argo CD would create `dummy`'s objects itself with no
-`meta.helm.sh` ownership, and the `helm upgrade --install dummy` in `apps`
+`gitops-bootstrap` hands `notification` to Argo CD after `apps`, never before —
+applied first, Argo CD would create `notification`'s objects itself with no
+`meta.helm.sh` ownership, and the `helm upgrade --install notification` in `apps`
 would then refuse to adopt them.
 
 `verify` runs at the end without being asked.

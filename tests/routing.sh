@@ -25,7 +25,7 @@ section "each path reaches its own service"
 expect "/api/products          " 401 "$(status GET /api/products)"
 expect "/api/orders            " 401 "$(status GET /api/orders)"
 expect "/api/payments          " 401 "$(status POST /api/payments '{}')"
-expect "/dummy                 " 200 "$(status GET /dummy)"
+expect "/notification          " 200 "$(status GET /notification)"
 
 # auth/login is the one API path that takes no token, so it answers properly
 # without one and shows the rewrite landed on the right handler.

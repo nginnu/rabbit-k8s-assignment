@@ -172,8 +172,8 @@ alloy:
         }
 
         // The injection webhook writes security.istio.io/tlsMode, so it marks
-        // exactly the pods that have a sidecar — without it dummy, whose sidecar
-        // arrives only once Argo CD syncs, is scraped on a dead port.
+        // exactly the pods that have a sidecar — without it notification, whose
+        // sidecar arrives only once Argo CD syncs, is scraped on a dead port.
         //
         // Running only: a Pending pod has no IP and its target becomes ":15020".
         selectors {

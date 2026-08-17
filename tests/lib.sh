@@ -14,7 +14,7 @@ export PATH="/usr/local/bin:$PATH"
 
 BASE="${BASE:-https://localhost}"
 # One application namespace split into two: web-ui lives in `web`, the four Go
-# services plus dummy and platform-config live in `api`. One variable, not
+# services plus notification and platform-config live in `api`. One variable, not
 # two: no suite here runs kubectl against a web-ui pod directly, only through
 # BASE, so api is the only namespace anything below needs to name.
 API_NS="${API_NS:-api}"

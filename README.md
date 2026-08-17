@@ -42,8 +42,9 @@ genuinely fresh clone is still unproven (tracked in [TODO.md](TODO.md)).
 
 **What this is** — a shirt shop, deliberately small but split the way a real one
 is: a Next.js frontend, three Go services that call each other, a MariaDB
-StatefulSet and a Redis cache. A purchase touches four of them in five requests,
-so there is something real to trace, break, and roll back.
+StatefulSet and a Redis cache. A purchase touches five services in five
+requests — notification is the fifth, payment-svc's best-effort /notify once a
+payment settles — so there is something real to trace, break, and roll back.
 
 Install the prerequisites first: [docs/install.md](docs/install.md). How to
 verify it once it's up: [docs/testing.md](docs/testing.md). What the
@@ -295,7 +296,7 @@ the Gateway.
 
 ## Current Assignment — where this stands
 
-`demo` is gone. The frontend and the six backend workloads are split into two
+`demo` is gone. The frontend and the five backend workloads are split into two
 namespaces so a NetworkPolicy peer can be written by namespace instead of by
 naming every pod (`kubernetes.io/metadata.name` on the namespace, set by the
 API server, not a hand-applied label — see `platform/manifests/apps/web/namespace.yaml`).
@@ -307,18 +308,18 @@ API server, not a hand-applied label — see `platform/manifests/apps/web/namesp
                             │  Traefik Gateway  │
                             └─────────┬─────────┘
                                       │
-   ═══ namespace: web ═══                ═══════════ namespace: api ═══════════
-   ║        │           ║                ║        │                          ║
-   ║        ▼           ║                ║   ┌────┼────────┬─────────┬─────┐ ║
-   ║   [ web-ui ]        ║                ║   ▼    ▼        ▼         ▼     ▼ ║
-   ║   ingress: gateway  ║                ║ [auth][order]◄►[payment][dummy]  ║
-   ║   egress: alloy     ║                ║              start/settle,      ║
-   ╚═════════════════════╝                ║              both ways          ║
-                                           ║                  │              ║
-                                           ║                  ▼              ║
-                                           ║           [ mock-payment ]      ║
-                                           ║           no gateway ingress    ║
-                                           ╚══════════════════════════════════╝
+   ═══ namespace: web ═══                ═════════════ namespace: api ════════════════
+   ║        │           ║                ║        │                                 ║
+   ║        ▼           ║                ║   ┌────┼────────┬─────────┬────────────┐ ║
+   ║   [ web-ui ]        ║                ║   ▼    ▼        ▼         ▼            ▼ ║
+   ║   ingress: gateway  ║                ║ [auth][order]◄►[payment][notification]  ║
+   ║   egress: alloy     ║                ║              start/settle,             ║
+   ╚═════════════════════╝                ║              both ways                 ║
+                                           ║                  │                     ║
+                                           ║                  ▼                     ║
+                                           ║           [ mock-payment ]             ║
+                                           ║           no gateway ingress           ║
+                                           ╚═════════════════════════════════════════╝
               default-deny both directions on all six — every peer above is a
               named service or namespace in the chart's networkPolicyPeers,
               not an open namespace
@@ -370,7 +371,7 @@ and keeping backend and data tiers private.
 | [notes/01 — ingress + TLS](notes/01-ingress-tls.md) | Gateway, mkcert CA, cert-manager, packet-capture proof |
 | [notes/03 — services and data](notes/03-services-and-data.md) | workloads, probes, resources, MariaDB + Redis |
 | [notes/04 — canary rollout](notes/04-canary-rollout.md) | Argo Rollouts on order-svc, proven both directions |
-| [notes/05 — GitOps with Argo CD](notes/05-gitops-argocd.md) | auto-sync and selfHeal on the dummy service |
+| [notes/05 — GitOps with Argo CD](notes/05-gitops-argocd.md) | auto-sync and selfHeal on the notification service (written before its rename) |
 | [notes/07 — observability](notes/07-observability.md) | LGTM pipeline, correlation, verification detail |
 | [notes/08 — Traefik + NetworkPolicy migration](notes/08-traefik-netpol-migration.md) | Istio → Traefik, `demo` → `web`/`api`, NetworkPolicy wired into `make up` |
 

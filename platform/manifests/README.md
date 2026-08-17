@@ -45,7 +45,7 @@ than the rest of it.
 | folder | file held back | why |
 |---|---|---|
 | `addons/observability/` | `route.yaml` | applied after the Helm installs, not before — a route attached to nothing sits orphaned with no error; `collector-service.yaml` and `netpol.yaml` go on *before* the installs so a wrong label selector surfaces in the rollout waits instead of as empty dashboards |
-| `addons/argocd/` | `applications.yaml` | applied by `gitops-bootstrap`, after `apps`. Applied earlier, Argo CD creates `dummy`'s objects itself with no `meta.helm.sh` ownership, and `helm upgrade --install dummy` then aborts with `invalid ownership metadata … missing key "app.kubernetes.io/managed-by"` — observed, not theoretical |
+| `addons/argocd/` | `applications.yaml` | applied by `gitops-bootstrap`, after `apps`. Applied earlier, Argo CD creates `notification`'s objects itself with no `meta.helm.sh` ownership, and `helm upgrade --install notification` then aborts with `invalid ownership metadata … missing key "app.kubernetes.io/managed-by"` — observed, not theoretical |
 
 ## The one folder that breaks the rule
 

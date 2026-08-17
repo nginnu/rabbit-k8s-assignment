@@ -32,6 +32,8 @@ services:
       - { name: APP_PORT, value: "9003" }
       - { name: MOCK_PAYMENT_URL, value: http://mock-payment.api.svc.cluster.local }
       - { name: ORDER_SVC_URL, value: http://order-svc.api.svc.cluster.local }
+      # Required: the Go code panics at startup without it.
+      - { name: NOTIFICATION_URL, value: http://notification.api.svc.cluster.local }
     envFromSecret:
       - mariadb-dsn
       - jwt-secret
@@ -50,4 +52,7 @@ services:
       ingress: [gateway, svc:order-svc]
       # No redis: this service opens MariaDB only. auth-svc and order-svc are
       # the two that call db.OpenRedis.
-      egress: [svc:order-svc, svc:mock-payment, mariadb, alloy]
+      # svc:notification is easy to forget: the settle path now ends with a
+      # best-effort notify, so without the rule the call is dropped and payment
+      # still succeeds — the miss is silent.
+      egress: [svc:order-svc, svc:mock-payment, svc:notification, mariadb, alloy]

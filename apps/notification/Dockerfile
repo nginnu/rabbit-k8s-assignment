@@ -12,12 +12,12 @@ ARG VERSION=dev
 RUN CGO_ENABLED=0 go build \
       -trimpath \
       -ldflags="-s -w -X main.version=${VERSION}" \
-      -o /out/dummy .
+      -o /out/notification .
 
 # distroless/static: no shell, no package manager, and runs as a non-root user
 # by default — nothing to exec into if the container is ever reached.
 FROM gcr.io/distroless/static-debian12:nonroot
-COPY --from=build /out/dummy /dummy
+COPY --from=build /out/notification /notification
 EXPOSE 8080
 USER nonroot:nonroot
-ENTRYPOINT ["/dummy"]
+ENTRYPOINT ["/notification"]

@@ -99,9 +99,9 @@ Everything below is written; nothing has been observed running on a cluster yet.
   api pod, an edge request visible in a sidecar access log
 - [ ] verify: the full suite passes with the mesh on (`make test`)
 
-dummy joins the mesh only after its chart change is pushed and Argo CD syncs —
-`tests/istio.sh` warns on its missing sidecar instead of failing. STRICT
-mTLS is deferred until Traefik re-encrypts to backends (notes/09).
+notification joins the mesh only after its chart change is pushed and Argo CD
+syncs — `tests/istio.sh` warns on its missing sidecar instead of failing.
+STRICT mTLS is deferred until Traefik re-encrypts to backends (notes/09).
 
 ## Deferred
 
@@ -109,7 +109,7 @@ mTLS is deferred until Traefik re-encrypts to backends (notes/09).
 - Canary bad-release rollback — proven once mid-note in
   [notes/04](notes/04-canary-rollout.md), not repeated as a standalone run the
   way the NetworkPolicy checks were
-- App of Apps — proven on `dummy` only in
+- App of Apps — proven on `notification` only in
   [notes/05](notes/05-gitops-argocd.md); the other five services are not yet
   under ArgoCD management
 - NetworkPolicy deny-path proof — enablement itself is no longer deferred:

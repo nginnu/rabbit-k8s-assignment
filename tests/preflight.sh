@@ -72,7 +72,7 @@ DATA_NS="${DATA_NS:-$(makevar DATA_NS)}"
 TRAEFIK_NS="${TRAEFIK_NS:-$(makevar TRAEFIK_NS)}"
 APP_VERSION="${VERSION:-$(makevar VERSION)}"
 # The application namespace split in two: web-ui lives in `web`; the four Go
-# services, dummy and platform-config live in `api`. Checks below that used to
+# services, notification and platform-config live in `api`. Checks below that used to
 # read one namespace now loop over both — a chart moved into the wrong one
 # renders healthy and is only found by going looking for it.
 APP_NAMESPACES="web api"
@@ -278,7 +278,7 @@ else
   bad "pods not ready:"$'\n'"$not_ready"
 fi
 
-# web-ui and dummy/auth-svc/order-svc/payment-svc/mock-payment/platform-config
+# web-ui and notification/auth-svc/order-svc/payment-svc/mock-payment/platform-config
 # split across two namespaces now, so this loops rather than reading one.
 mismatched=""
 for ns in $APP_NAMESPACES; do
@@ -371,6 +371,32 @@ else
   bad "helm releases missing or not deployed:"
   printf '%s\n' "$missing_releases"
 fi
+
+# The gitops charts are invisible to the check above — APP_CHARTS deliberately
+# excludes them — so they need their own: the release exists (installed once
+# by gitops-bootstrap), and Argo CD owns it now (Application Healthy + Synced).
+gitops_charts=$(sed -nE 's/^GITOPS_CHARTS[[:space:]]*:?=[[:space:]]*(.*)/\1/p' "$MAKEFILE" | head -1)
+
+for g in $gitops_charts; do
+  gstatus=$(printf '%s\n' "$release_status" | awk -v n="$g" '$1==n {print $2}')
+  compare "helm release $g     " deployed "${gstatus:-missing}" \
+    "gitops-bootstrap installed it once; without the release Argo CD has nothing to manage"
+
+  app=$($KUBECTL -n argocd get application "$g" -o json 2>/dev/null | python3 -c "
+import json,sys
+try: d = json.load(sys.stdin)
+except Exception: sys.exit()
+print(d.get('status', {}).get('health', {}).get('status', ''),
+      d.get('status', {}).get('sync', {}).get('status', ''))" 2>/dev/null)
+  health=$(printf '%s' "$app" | awk '{print $1}')
+  sync=$(printf '%s' "$app" | awk '{print $2}')
+  if [ "$health" = "Healthy" ] && [ "$sync" = "Synced" ]; then
+    ok "argocd application $g is Healthy/Synced"
+  else
+    bad "argocd application $g: health=${health:-none} sync=${sync:-none}"
+    note "the Application exists but has not converged — check the argocd UI at /argocd"
+  fi
+done
 
 # ─── 5  data layer ───────────────────────────────────────────────────────────
 #

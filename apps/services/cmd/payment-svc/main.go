@@ -1,5 +1,5 @@
 // Package main — payment-svc: deepest trace in the lab (10+ spans).
-// Flow: JWT verify -> validate order -> create pending payment -> charge mock-payment -> update payment -> mark order paid.
+// Flow: JWT verify -> validate order -> create pending payment -> charge mock-payment -> update payment -> mark order paid -> notify notification.
 package main
 
 import (
@@ -62,12 +62,14 @@ func main() {
 	// Service URLs from env
 	orderSvcURL := mustEnv("ORDER_SVC_URL")
 	mockPaymentURL := mustEnv("MOCK_PAYMENT_URL")
+	notifURL := mustEnv("NOTIFICATION_URL")
 
 	// Wire dependencies
 	paymentRepo := repository.New(gormDB)
 	orderClient := gateway.NewOrderClient(orderSvcURL)
 	mockPayClient := gateway.NewMockPaymentClient(mockPaymentURL)
-	paymentUC := usecase.New(paymentRepo, orderClient, mockPayClient)
+	notificationClient := gateway.NewNotificationClient(notifURL)
+	paymentUC := usecase.New(paymentRepo, orderClient, mockPayClient, notificationClient)
 	paymentHandler := handler.New(paymentUC)
 
 	// Gin router

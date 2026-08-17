@@ -1,7 +1,7 @@
 # platform-config — the environment every service reads
 #
 # PLATFORM values, all of them. An app team that needs a value of its own puts
-# it in `env` on its own service; anything here changes six services at once,
+# it in `env` on its own service; anything here changes four services at once,
 # which is exactly why it is not theirs to set.
 #
 # Changing a key here restarts every service that mounts the ConfigMap. That is

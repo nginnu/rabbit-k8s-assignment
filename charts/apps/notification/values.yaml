@@ -1,0 +1,76 @@
+# notification
+#
+# Receives payment-svc's POST /notify when a payment settles, and lists what it
+# received on GET /notifications. POST /notify-failed deliberately fails, so a
+# failure can be simulated on demand and then seen in Loki.
+#
+# The /chaos/error-rate and /chaos/latency endpoints are kept: a canary still
+# needs a workload that can be told to start failing on demand.
+
+# api, not a namespace of its own: notification is a backend workload reached on
+# /notification through the same gateway as the services, and a third namespace
+# would need its own copy of every cross-namespace allow rule to prove the same
+# thing.
+namespace: api
+
+# notification still mounts no ConfigMap and no Secret — it stays standalone.
+# The trade-off: the telemetry env below is duplicated inline instead of read
+# from app-config, because Argo CD syncs this chart from main independently of
+# the helm-owned ConfigMap release; a collector endpoint change means editing
+# two places (here and charts/apps/platform-config/values.yaml), accepted for
+# isolation — a failure here stays this workload's, not a missing dependency's.
+
+services:
+  notification:
+    image:
+      repository: notification
+      # Must match VERSION in the Makefile. If the tag here is one that
+      # `make images` does not build, the pod fails with ErrImageNeverPull.
+      tag: v0.1.0
+      # kind load copies the image to every node and there is no registry,
+      # so the kubelet must not try to pull.
+      pullPolicy: Never
+    port: 8080
+    replicas: 5
+    workloadKind: Deployment
+    # Must be a number. The kubelet cannot read /etc/passwd inside the image,
+    # so it cannot check whether a username maps to root, and refuses to start
+    # the container. 65532 is the nonroot uid in distroless.
+    uid: 65532
+    # No startup delay — notification is ready immediately. The library defaults
+    # are for services that need time to start, so set these explicitly.
+    probes:
+      liveness:  { path: /healthz, initialDelaySeconds: 0, periodSeconds: 10 }
+      readiness: { path: /readyz,  initialDelaySeconds: 0, periodSeconds: 5 }
+    resources:
+      requests: { cpu: 20m,  memory: 32Mi }
+      limits:   { cpu: 200m, memory: 128Mi }
+    env:
+      - { name: PORT, value: "8080" }
+      # Mirrored from app-config (charts/apps/platform-config/values.yaml), not
+      # mounted from it — see the header. The Go code panics at startup without
+      # DEPLOYMENT_ENV and the OTLP endpoint, same philosophy as its siblings.
+      - { name: DEPLOYMENT_ENV, value: "local" }
+      - { name: SVC_PREFIX, value: "platform" }
+      - { name: SVC_VERSION, value: "v0.1.0" }
+      - { name: OTEL_EXPORTER_OTLP_ENDPOINT, value: "http://otel-collector.observability.svc.cluster.local:4317" }
+      - { name: OTEL_EXPORTER_OTLP_PROTOCOL, value: "grpc" }
+    topologySpread: true
+    pdb: { minAvailable: 1 }
+
+    # Same mesh opt-in as its siblings, with one caveat: this chart is synced
+    # by Argo CD from main, not by `make apps`, so the sidecar arrives only
+    # after the commit is pushed and Argo syncs — until then notification runs
+    # 1/1 and tests/istio.sh warns instead of failing on it.
+    mesh: true  # adds netpol istiod (egress) + alloy-scrape:15020 (ingress)
+
+    networkPolicy: true
+    networkPolicyPeers:
+      # payment-svc must be here or its /notify call never arrives: the
+      # namespace is default-deny, and payment still succeeds without the
+      # notification — the call is best-effort, so a dropped packet fails
+      # silently and nothing in the logs says the rule is missing.
+      ingress: [gateway, svc:payment-svc]
+      # egress: [alloy] now carries the OTLP push, not just future-proofing: the
+      # `alloy` peer in _networkpolicy.tpl opens TCP 4317, the OTLP/gRPC port.
+      egress: [alloy]

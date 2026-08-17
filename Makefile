@@ -298,7 +298,7 @@ images:
 	@# pullPolicy is Never, so a chart pinned to an unbuilt tag does not fail at
 	@# deploy time — the pod just sits in ErrImageNeverPull.
 	@./platform/scripts/check-image-tags.sh $(VERSION)
-	@docker build --build-arg VERSION=$(VERSION) -t dummy:$(VERSION) apps/dummy
+	@docker build --build-arg VERSION=$(VERSION) -t notification:$(VERSION) apps/notification
 	@for s in $(GO_SVCS); do \
 		docker build --build-arg SVC=$$s --build-arg VERSION=$(VERSION) \
 			-t $$s:$(VERSION) apps/services; \
@@ -307,7 +307,7 @@ images:
 	@# kind nodes have their own image store and no registry, so an image built on
 	@# the host is invisible until loaded in.
 	@kind load docker-image --name $(CLUSTER) \
-		dummy:$(VERSION) web-ui:$(VERSION) \
+		notification:$(VERSION) web-ui:$(VERSION) \
 		$(foreach s,$(GO_SVCS),$(s):$(VERSION))
 
 # One release per service, so one can be rolled back without its siblings.
@@ -332,14 +332,14 @@ APP_DEPLOYS := auth-svc order-svc payment-svc mock-payment web-ui
 # from helm's field manager; a plain `helm upgrade` does not force back, so it
 # dies on the fields Argo CD now owns:
 #
-#   Error: UPGRADE FAILED: conflict occurred while applying object api/dummy
+#   Error: UPGRADE FAILED: conflict occurred while applying object api/notification
 #   apps/v1, Kind=Deployment: Apply failed with 2 conflicts: conflicts with
-#   "argocd-controller": .spec.template.spec.containers[name="dummy"]
+#   "argocd-controller": .spec.template.spec.containers[name="notification"]
 #   .livenessProbe.initialDelaySeconds
 #
 # The first run passes — helm installs before the Application exists — so the
 # mistake surfaces one full run after it is made.
-GITOPS_CHARTS := dummy
+GITOPS_CHARTS := notification
 
 ## apps: deploy the application services from their charts
 apps: data app-secrets
@@ -457,7 +457,7 @@ argocd: namespaces
 # itself, none of them carrying meta.helm.sh ownership, and the helm install
 # below refuses to adopt them:
 #
-#   Error: unable to continue with install: NetworkPolicy "dummy" in namespace
+#   Error: unable to continue with install: NetworkPolicy "notification" in namespace
 #   "api" exists and cannot be imported into the current release: invalid
 #   ownership metadata; label validation error: missing key
 #   "app.kubernetes.io/managed-by": must be set to "Helm"
@@ -539,12 +539,33 @@ verify:
 	@# 401 without a token is the correct answer, and it proves the request
 	@# reached auth-svc rather than stopping at the gateway.
 	@curl -sS -o /dev/null -w '  /api/products       -> HTTP %{http_code}  (401 = auth is enforced)\n' --max-time 10 https://localhost/api/products
-	@curl -sS -o /dev/null -w '  /dummy              -> HTTP %{http_code}\n' --max-time 10 https://localhost/dummy
+	@curl -sS -o /dev/null -w '  /notification       -> HTTP %{http_code}\n' --max-time 10 https://localhost/notification
 	@echo "   run 'make test' to buy something end to end"
 
 ## test: run every test suite
 test:
 	@./tests/run-all.sh
+
+## test-unit: go test both modules — the local loop, no cluster required
+test-unit:
+	@# Suite equivalent is tests/unit.sh, which run-all.sh already runs, so
+	@# test-unit is deliberately not called from test: — wiring it in would
+	@# run every unit test twice. Without this target the only way to run
+	@# these is `make test`, which needs the whole cluster up first.
+	@cd apps/notification && go test ./...
+	@cd apps/services && go test ./...
+
+## test-preflight: does the running cluster match what the repo declares
+test-preflight:
+	@./tests/preflight.sh
+
+## load-test: steady traffic for a canary analysis window (needs k6, ~4 min)
+load-test:
+	@# Not part of test: — it is a generator the Argo Rollouts analysis
+	@# measures, not a pass/fail suite. Run it in the background while a
+	@# canary rolls: without traffic in the window the success-rate query
+	@# reads 0/0 and fails by design.
+	@BASE=$${BASE:-https://localhost} k6 run tests/order-svc-canary-load.js
 
 ## test-routing: each path reaches the service that owns it
 test-routing:
@@ -592,5 +613,5 @@ down:
 
 .PHONY: help cluster cilium istio kiali namespaces gateway-api traefik tls gateway traefik-dashboard hubble secrets app-secrets \
         sql data images observability rollouts argocd gitops-bootstrap apps up verify down \
-        test test-routing test-route-isolation test-mesh test-istio test-auth test-checkout test-resilience test-tls \
+        test test-unit test-preflight load-test test-routing test-route-isolation test-mesh test-istio test-auth test-checkout test-resilience test-tls \
         test-o11y test-journey

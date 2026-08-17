@@ -2,7 +2,7 @@
 #
 # Usecase: a customer buys a shirt.
 #
-# Five requests, each feeding the next, across four services. This is the one
+# Five requests, each feeding the next, across five services. This is the one
 # that matters — if it passes, routing, auth, the service-to-service calls and
 # MariaDB all worked together.
 #
@@ -92,5 +92,79 @@ expect "orders row says paid   " paid "$db_status"
 
 db_payment=$(mysql_q "SELECT COUNT(*) FROM payments WHERE order_id = $order_id")
 expect "one payment recorded   " 1 "$db_payment"
+
+section "the notification leg"
+# payment-svc also POSTs /notify to the notification service once the payment
+# settles. Nothing above this section would notice that leg missing: the call
+# is deliberately non-fatal, so a purchase can fully succeed with it broken.
+
+# 200, not the body's content, is the claim here — the route strip and the
+# endpoint exist. notification registers exact paths, so /notification has to
+# be rewritten to /notifications on the way in; an unstripped prefix matches
+# no handler and this 404s.
+expect "notifications endpoint  " 200 "$(status GET /notification/notifications)"
+
+# The proof the call happened is the notification pod's own log line, not a
+# read-back GET on the endpoint above: the history is in-memory and per-pod,
+# five replicas sit behind one Service, and a GET lands on a random one — a
+# miss would prove nothing about the pod that did receive this order. The
+# line is written by another pod on another schedule, so the grep retries
+# rather than racing it.
+received=0
+for _ in $(seq 1 10); do
+  received=$(kubectl -n "$API_NS" logs -l app.kubernetes.io/name=notification --prefix --tail=-1 2>/dev/null \
+    | grep '"notification received"' | grep "\"order_id\":$order_id," \
+    | grep -c "\"payment_id\":$payment_id,")
+  [ "${received:-0}" -ge 1 ] && break
+  sleep 1
+done
+if [ "${received:-0}" -ge 1 ]; then
+  ok "notification received order $order_id / payment $payment_id"
+else
+  bad "no \"notification received\" line for order $order_id — /notify was not called, or it failed non-fatally"
+fi
+
+# The caller's side of the same call. Either line alone could be stale from an
+# earlier run; the pair — payment-svc saying sent, notification saying
+# received, both carrying this payment's id — is what makes it proof.
+sent=0
+for _ in $(seq 1 10); do
+  sent=$(kubectl -n "$API_NS" logs -l app.kubernetes.io/name=payment-svc --prefix --tail=-1 2>/dev/null \
+    | grep '"notification sent"' | grep "\"order_id\":$order_id," \
+    | grep -c "\"payment_id\":$payment_id,")
+  [ "${sent:-0}" -ge 1 ] && break
+  sleep 1
+done
+if [ "${sent:-0}" -ge 1 ]; then
+  ok "payment-svc logged \"notification sent\" for payment $payment_id"
+else
+  bad "no \"notification sent\" line in payment-svc for payment $payment_id — the leg failed before it reached notification"
+fi
+
+section "failure simulation"
+# /notify-failed is the manual failure simulator: five error lines and a 500,
+# so a failing notification can be produced on demand and looked for in Loki.
+# The 500 is the correct answer, not a suite failure — what has to be true is
+# that the burst reaches the pod log, because that is what Alloy ships.
+# The real order and payment ids, not zeros: the handler rejects order_id 0
+# with a 400, and the ids make this burst greppably unique against the
+# received line checked above.
+fail_code=$(status POST /notification/notify-failed \
+  "{\"order_id\":$order_id,\"payment_id\":$payment_id,\"amount\":$AMOUNT,\"user_id\":0}")
+expect "notify-failed answers  " 500 "$fail_code"
+
+burst=0
+for _ in $(seq 1 10); do
+  burst=$(kubectl -n "$API_NS" logs -l app.kubernetes.io/name=notification --prefix --tail=-1 2>/dev/null \
+    | grep '"notification delivery failed"' | grep "\"order_id\":$order_id," \
+    | grep -c "\"payment_id\":$payment_id,")
+  [ "${burst:-0}" -ge 1 ] && break
+  sleep 1
+done
+if [ "${burst:-0}" -ge 1 ]; then
+  ok "the failure burst is in the notification log, where Alloy can ship it to Loki"
+else
+  bad "no \"notification delivery failed\" line in the notification log — the simulator's burst never reached the pod log Loki is fed from"
+fi
 
 summary

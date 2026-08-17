@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"time"
 
 	"github.com/nginnu/rabbit-k8s-assignment/apps/services/internal/payment/domain"
 	"github.com/nginnu/rabbit-k8s-assignment/apps/services/internal/payment/gateway"
-	"github.com/nginnu/rabbit-k8s-assignment/apps/services/internal/payment/repository"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -34,19 +34,52 @@ type ProcessPaymentOutput struct {
 	GatewayRef string               `json:"gateway_ref"`
 }
 
+// The four dependencies as interfaces, defined here on the consumer side
+// rather than in domain: ChargeGateway's signature carries gateway.ChaosHeaders,
+// and domain cannot import gateway without a cycle (gateway already imports
+// domain for its DTOs). The concrete gorm repository and HTTP clients satisfy
+// these without knowing they exist; tests supply fakes that record calls, which
+// is how the saga asserts step order, not just outcomes.
+type (
+	// PaymentRepository persists the payments table.
+	PaymentRepository interface {
+		CreatePending(ctx context.Context, orderID int, amount float64) (*domain.Payment, error)
+		UpdateStatus(ctx context.Context, id int, status domain.PaymentStatus, gatewayRef string) error
+		FindByID(ctx context.Context, id int) (*domain.Payment, error)
+	}
+
+	// OrderGateway is the order-svc internal API.
+	OrderGateway interface {
+		Validate(ctx context.Context, orderID int) (*domain.OrderInfo, error)
+		MarkPaid(ctx context.Context, orderID int) error
+	}
+
+	// ChargeGateway is the external payment gateway.
+	ChargeGateway interface {
+		Charge(ctx context.Context, amount float64, chaos gateway.ChaosHeaders) (*domain.ChargeResult, error)
+	}
+
+	// Notifier is the notification service.
+	Notifier interface {
+		Notify(ctx context.Context, paymentID, orderID int, amount float64, userID int) error
+	}
+)
+
 // PaymentUsecase contains the business logic for payments.
 type PaymentUsecase struct {
-	repo    *repository.PaymentRepo
-	order   *gateway.OrderClient
-	mockPay *gateway.MockPaymentClient
+	repo    PaymentRepository
+	order   OrderGateway
+	mockPay ChargeGateway
+	notify  Notifier
 }
 
 // New creates a PaymentUsecase.
-func New(repo *repository.PaymentRepo, order *gateway.OrderClient, mockPay *gateway.MockPaymentClient) *PaymentUsecase {
+func New(repo PaymentRepository, order OrderGateway, mockPay ChargeGateway, notify Notifier) *PaymentUsecase {
 	return &PaymentUsecase{
 		repo:    repo,
 		order:   order,
 		mockPay: mockPay,
+		notify:  notify,
 	}
 }
 
@@ -141,6 +174,28 @@ func (u *PaymentUsecase) ProcessPayment(ctx context.Context, in ProcessPaymentIn
 		slog.ErrorContext(ctx, "mark order paid failed (non-fatal)",
 			"order_id", in.OrderID,
 			"error", err,
+		)
+	}
+
+	// Step 6: Notify the notification service.
+	// Non-fatal, same reasoning as Step 5: the payment already cleared, so a
+	// broken notification must never fail a checkout that succeeded.
+	// The 3s timeout means a hanging notification cannot stall the checkout
+	// response — the caller must not depend on the callee's configuration.
+	notifyCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	if err := u.notify.Notify(notifyCtx, payment.ID, in.OrderID, in.Amount, in.UserID); err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		span.RecordError(err)
+		slog.ErrorContext(ctx, "notification send failed (non-fatal)",
+			"order_id", in.OrderID,
+			"payment_id", payment.ID,
+			"error", err,
+		)
+	} else {
+		slog.InfoContext(ctx, "notification sent",
+			"order_id", in.OrderID,
+			"payment_id", payment.ID,
 		)
 	}
 

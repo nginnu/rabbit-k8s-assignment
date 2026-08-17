@@ -73,7 +73,7 @@ else
 fi
 
 # The discriminator used everywhere below: istio only injects a sidecar into
-# auth-svc, order-svc, payment-svc, mock-payment and dummy in the api
+# auth-svc, order-svc, payment-svc, mock-payment and notification in the api
 # namespace (tests/istio.sh). observability, argocd, kube-system and traefik
 # carry no sidecar, so `server: istio-envoy` is never legitimate on a console
 # response — only a storefront route answering in the console's place can
@@ -116,7 +116,7 @@ section "console hosts are not hijacked by the storefront prefixes"
 # path of its own, like /api/istio/certs, is not a hijack; the fingerprint is
 # what tells the two apart.
 HOSTS="kiali grafana argocd hubble traefik"
-PREFIXES="/api/auth/info /api/products /api/orders /api/payments /dummy"
+PREFIXES="/api/auth/info /api/products /api/orders /api/payments /notification"
 
 for host in $HOSTS; do
   for prefix in $PREFIXES; do

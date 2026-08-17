@@ -39,7 +39,7 @@ fi
 section "every api service pod carries a ready sidecar"
 
 # Four services, deployed by `make apps`, turn meshed when their release rolls.
-# dummy is the exception: its chart is synced by Argo CD from main, so a
+# notification is the exception: its chart is synced by Argo CD from main, so a
 # sidecar appears only after the commit is pushed and Argo syncs — warned
 # about below, not failed on, or every fresh clone is red over a push that has
 # not happened yet.
@@ -78,17 +78,17 @@ for svc in auth-svc order-svc payment-svc mock-payment; do
   done
 done
 
-# dummy, warn-only — and reading both container lists for the same reason as
-# above: a native sidecar never shows up in spec.containers.
-dummy_names=$(kubectl -n "$API_NS" get pods -l app.kubernetes.io/name=dummy \
+# notification, warn-only — and reading both container lists for the same
+# reason as above: a native sidecar never shows up in spec.containers.
+notification_names=$(kubectl -n "$API_NS" get pods -l app.kubernetes.io/name=notification \
   -o jsonpath='{.items[*].spec.initContainers[*].name}{" "}{.items[*].spec.containers[*].name}' 2>/dev/null)
-case "$dummy_names" in
+case "$notification_names" in
   *istio-proxy*)
-    ok "dummy pods carry a sidecar — Argo CD has synced the mesh opt-in" ;;
+    ok "notification pods carry a sidecar — Argo CD has synced the mesh opt-in" ;;
   "")
-    note "no dummy pods found in $API_NS" ;;
+    note "no notification pods found in $API_NS" ;;
   *)
-    note "dummy pods have no sidecar yet — expected until the mesh opt-in commit is pushed and Argo CD syncs; not counted as a failure" ;;
+    note "notification pods have no sidecar yet — expected until the mesh opt-in commit is pushed and Argo CD syncs; not counted as a failure" ;;
 esac
 
 section "the sidecar is on the request path"
