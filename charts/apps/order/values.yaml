@@ -16,7 +16,7 @@ services:
       pullPolicy: Never
     port: 9002
     replicas: 2
-    workloadKind: Rollout
+    workloadKind: Deployment
     uid: 10001
     probes:
       liveness:  { path: /healthz, initialDelaySeconds: 10, periodSeconds: 15 }
@@ -29,8 +29,8 @@ services:
       - { name: PAYMENT_GATEWAY_URL, value: "http://payment.api.svc.cluster.local" }
       - { name: NOTIFICATION_URL, value: "http://notification.api.svc.cluster.local" }
       # Fraction of business requests answered with 500. 0 is off; raise it to
-      # deploy a build that passes /healthz but serves errors, which is what a
-      # canary has to catch and a crashing pod does not.
+      # deploy a build that passes /healthz but serves errors — the fault the
+      # app-level checks cannot see.
       - { name: FAIL_RATE, value: "0" }
     envFromSecret:
       - mariadb-dsn
@@ -38,10 +38,9 @@ services:
     topologySpread: true
     pdb: { minAvailable: 1 }
 
-    # Meshed like its siblings. The label lands on spec.template, which a
-    # Rollout shares with a Deployment, so the canary pods get sidecars too —
-    # and the traffic split stays pod-count-based: adding a VirtualService here
-    # would be the mesh taking routing Argo Rollouts already owns.
+    # Meshed like its siblings: edge traffic arrives plaintext from Traefik,
+    # and the payment and notification hops in the egress list below are the
+    # service-to-service calls that ride the mesh.
     mesh: true  # adds netpol istiod (egress) + alloy-scrape:15020 (ingress)
 
     networkPolicy: true
@@ -51,47 +50,3 @@ services:
       # Calls payment gateway (external charge) and notification (async alert).
       # No redis: catalog split moved product cache there.
       egress: [svc:payment, svc:notification, mariadb, alloy]
-
-    rollout:
-      strategy:
-        canary:
-          # 50 because traffic splits by pod count — no Istio routing here, so
-          # at replicas: 2 nothing smaller can actually be produced.
-          steps:
-            - setWeight: 50
-            - analysis:
-                templates:
-                  - templateName: order-success-rate
-            - setWeight: 100
-
-      analysis:
-        address: http://prometheus-server.observability.svc.cluster.local
-        metrics:
-          - name: success-rate
-            # Metrics arrive by push every 10s, not by scrape. A shorter
-            # interval reads a rate() the canary has not exported into yet.
-            interval: 30s
-            count: 4
-            # The pod is ready before its first export exists; without this the
-            # first measurement grades the old pods.
-            initialDelay: 30s
-            # No traffic returns NaN (0/0) or an empty vector, and an empty one
-            # throws inside expr and scores as a provider Error rather than a
-            # failure. Both guards make it a plain failed measurement instead,
-            # so a canary nobody exercised is never promoted.
-            successCondition: len(result) > 0 && !isNaN(result[0]) && result[0] >= 0.95
-            failureLimit: 1
-            # Argo defaults to 4 — two minutes of unreachable Prometheus while
-            # the release keeps advancing.
-            consecutiveErrorLimit: 2
-            # sum with no `by` collapses old and new pods together: without
-            # Istio there is no canary-only label to split on.
-            query: |
-              sum(rate(http_server_request_duration_seconds_count{
-                service="order",
-                http_response_status_code!~"5.."
-              }[2m]))
-              /
-              sum(rate(http_server_request_duration_seconds_count{
-                service="order"
-              }[2m]))

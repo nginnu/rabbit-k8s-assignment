@@ -103,11 +103,10 @@ else
   bad "$failures of 10 requests failed during the replacement"
 fi
 
-# Pods, not the controller: order is an Argo Rollout, the others are still
-# Deployments, and both write the same app.kubernetes.io/name label from the
-# shared chart template. Counting Ready pods works for either kind without a
-# branch, and does not break the next time a service changes kind — `kubectl
-# rollout status deployment/...` only understands Deployments, and a Rollout's
+# Pods, not the controller: every service writes the same
+# app.kubernetes.io/name label from the shared chart template, so counting
+# Ready pods works for any workload kind without a branch — `kubectl rollout
+# status deployment/...` only understands Deployments, and a Rollout's
 # equivalent needs the kubectl-argo-rollouts plugin, a dependency this suite
 # does not otherwise take on.
 replicas=0
