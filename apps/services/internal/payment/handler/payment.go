@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/nginnu/rabbit-k8s-assignment/apps/services/internal/payment/domain"
 	"github.com/nginnu/rabbit-k8s-assignment/apps/services/internal/payment/gateway"
 	"github.com/nginnu/rabbit-k8s-assignment/apps/services/internal/payment/usecase"
 	"github.com/nginnu/rabbit-k8s-assignment/apps/services/internal/shared/middleware"
@@ -30,8 +31,15 @@ func New(uc *usecase.PaymentUsecase) *PaymentHandler {
 // PaymentUsecase.ProcessPayment → OrderGateway.Validate, never the client's.
 // A body that still sends "amount" is accepted and ignored — encoding/json
 // drops unknown-to-the-struct fields rather than erroring on them.
+//
+// Method is client-chosen and stays that way: unlike price, which channel
+// pays is the caller's decision, not order-svc's. It is still validated
+// below against the four channels the schema and the gateway both know
+// about, so a typo fails here with a 400 instead of at the DB's enum
+// constraint or, worse, silently at the gateway.
 type createPaymentRequest struct {
-	OrderID int `json:"order_id" binding:"required"`
+	OrderID int    `json:"order_id" binding:"required"`
+	Method  string `json:"method"   binding:"required"`
 }
 
 // CreatePayment handles POST /payments.
@@ -39,6 +47,12 @@ func (h *PaymentHandler) CreatePayment(c *gin.Context) {
 	var req createPaymentRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	method := domain.PaymentMethod(req.Method)
+	if !method.Valid() {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "method must be one of card, truemoney, gwallet, cod"})
 		return
 	}
 
@@ -58,6 +72,7 @@ func (h *PaymentHandler) CreatePayment(c *gin.Context) {
 	out, err := h.uc.ProcessPayment(c.Request.Context(), usecase.ProcessPaymentInput{
 		OrderID: req.OrderID,
 		UserID:  claims.UserID,
+		Method:  method,
 		Chaos:   chaos,
 	})
 	if err != nil {

@@ -26,9 +26,15 @@ var tracer = otel.Tracer("payment/usecase")
 // There is deliberately no Amount field. The price the client saw when it
 // posted this request is not trusted for anything: order's Validate call
 // below is the only source ProcessPayment reads a price from.
+//
+// Method is different: unlike price, which channel pays is genuinely the
+// caller's choice, so it does travel from the client. handler.CreatePayment
+// has already validated it against the four known channels before this
+// struct is built.
 type ProcessPaymentInput struct {
 	OrderID int
 	UserID  int
+	Method  domain.PaymentMethod
 	Chaos   gateway.ChaosHeaders
 }
 
@@ -49,7 +55,7 @@ type ProcessPaymentOutput struct {
 type (
 	// PaymentRepository persists the payments table.
 	PaymentRepository interface {
-		CreatePending(ctx context.Context, orderID int, amount float64) (*domain.Payment, error)
+		CreatePending(ctx context.Context, orderID int, amount float64, method domain.PaymentMethod) (*domain.Payment, error)
 		UpdateStatus(ctx context.Context, id int, status domain.PaymentStatus, gatewayRef string) error
 		FindByID(ctx context.Context, id int) (*domain.Payment, error)
 	}
@@ -63,7 +69,7 @@ type (
 
 	// ChargeGateway is the external payment gateway.
 	ChargeGateway interface {
-		Charge(ctx context.Context, amount float64, chaos gateway.ChaosHeaders) (*domain.ChargeResult, error)
+		Charge(ctx context.Context, amount float64, method domain.PaymentMethod, chaos gateway.ChaosHeaders) (*domain.ChargeResult, error)
 	}
 
 	// Notifier is the notification service.
@@ -103,11 +109,13 @@ func (u *PaymentUsecase) ProcessPayment(ctx context.Context, in ProcessPaymentIn
 	span.SetAttributes(
 		attribute.Int("order.id", in.OrderID),
 		attribute.Int("user.id", in.UserID),
+		attribute.String("payment.method", string(in.Method)),
 	)
 
 	slog.InfoContext(ctx, "payment started",
 		"order_id", in.OrderID,
 		"user_id", in.UserID,
+		"method", in.Method,
 	)
 
 	// Step 1: Validate order exists and is pending. order's response is
@@ -133,7 +141,7 @@ func (u *PaymentUsecase) ProcessPayment(ctx context.Context, in ProcessPaymentIn
 	)
 
 	// Step 2: Create pending payment record.
-	payment, err := u.repo.CreatePending(ctx, in.OrderID, info.Amount)
+	payment, err := u.repo.CreatePending(ctx, in.OrderID, info.Amount, in.Method)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)
@@ -149,15 +157,20 @@ func (u *PaymentUsecase) ProcessPayment(ctx context.Context, in ProcessPaymentIn
 		"order_id", in.OrderID,
 	)
 
-	// Step 3: Call the payment gateway to charge.
-	chargeResult, err := u.charge.Charge(ctx, info.Amount, in.Chaos)
+	// Step 3: Call the payment gateway to charge. A cod method fails here on
+	// every call — gateway.PaymentGatewayClient.Charge treats the 402
+	// payment-gateway answers with the same as any other non-200: this branch
+	// already marks the payment failed and returns it below, so cod needs no
+	// special case at all. TestProcessPaymentCODAlwaysFails pins that down.
+	chargeResult, err := u.charge.Charge(ctx, info.Amount, in.Method, in.Chaos)
 	if err != nil {
-		// Gateway returned error (500) -- mark payment as failed.
+		// Gateway returned error (500 or 402) -- mark payment as failed.
 		_ = u.repo.UpdateStatus(ctx, payment.ID, domain.StatusFailed, "")
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)
 		slog.ErrorContext(ctx, "gateway charge failed",
 			"payment_id", payment.ID,
+			"method", in.Method,
 			"error", err,
 		)
 		return &ProcessPaymentOutput{

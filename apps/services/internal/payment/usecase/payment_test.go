@@ -46,14 +46,18 @@ type fakeRepo struct {
 		status domain.PaymentStatus
 		ref    string
 	}
+	// gotMethod records what CreatePending was actually handed, so a test can
+	// assert the method that reaches the DB matches what the client asked for.
+	gotMethod domain.PaymentMethod
 }
 
-func (f *fakeRepo) CreatePending(_ context.Context, orderID int, amount float64) (*domain.Payment, error) {
+func (f *fakeRepo) CreatePending(_ context.Context, orderID int, amount float64, method domain.PaymentMethod) (*domain.Payment, error) {
 	f.log.call("repo.create_pending")
+	f.gotMethod = method
 	if f.createErr != nil {
 		return nil, f.createErr
 	}
-	return &domain.Payment{ID: 42, OrderID: orderID, Amount: amount, Status: domain.StatusPending}, nil
+	return &domain.Payment{ID: 42, OrderID: orderID, Amount: amount, Method: method, Status: domain.StatusPending}, nil
 }
 
 func (f *fakeRepo) UpdateStatus(_ context.Context, id int, status domain.PaymentStatus, ref string) error {
@@ -104,11 +108,14 @@ type fakeCharge struct {
 	// gotAmount records what ProcessPayment actually sent to Charge, so a
 	// test can assert it traces back to the order, not the caller.
 	gotAmount float64
+	// gotMethod records what ProcessPayment actually sent to Charge.
+	gotMethod domain.PaymentMethod
 }
 
-func (f *fakeCharge) Charge(_ context.Context, amount float64, _ gateway.ChaosHeaders) (*domain.ChargeResult, error) {
+func (f *fakeCharge) Charge(_ context.Context, amount float64, method domain.PaymentMethod, _ gateway.ChaosHeaders) (*domain.ChargeResult, error) {
 	f.log.call("gateway.charge")
 	f.gotAmount = amount
+	f.gotMethod = method
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -143,7 +150,7 @@ func newUsecase() (PaymentRepository, OrderGateway, ChargeGateway, Notifier, *ca
 }
 
 func input() ProcessPaymentInput {
-	return ProcessPaymentInput{OrderID: 7, UserID: 1}
+	return ProcessPaymentInput{OrderID: 7, UserID: 1, Method: domain.MethodCard}
 }
 
 func TestMain(m *testing.M) {
@@ -298,6 +305,50 @@ func TestProcessPaymentChargeFailsMarksFailed(t *testing.T) {
 	}
 	if log.has("order.mark_paid") {
 		t.Errorf("order marked paid after failed charge: %v", log.calls)
+	}
+}
+
+// cod is not simulated by a special branch in the usecase — there isn't
+// one. It goes through the exact same "gateway returned an error" path as
+// any declined charge (fakeCharge.err stands in for the 402
+// payment-gateway answers for real, per gateway.PaymentGatewayClient.Charge
+// treating non-200 as an error). What this test pins down is the outcome
+// the storefront and the observability stack both depend on: the payment
+// row lands on failed and the order is never touched, so a repeated cod
+// request reproduces the same failure every time — not a fresh 500 or a
+// half-settled order.
+func TestProcessPaymentCODAlwaysFails(t *testing.T) {
+	repo, order, charge, notify, log := newUsecase()
+	charge.(*fakeCharge).err = errors.New("payment-gateway returned 402: cod settlement is not supported by this gateway")
+	uc := New(repo, order, charge, notify)
+
+	in := input()
+	in.Method = domain.MethodCOD
+
+	out, err := uc.ProcessPayment(context.Background(), in)
+	if err == nil {
+		t.Fatal("expected error for cod — the handler maps this to 402")
+	}
+	if out == nil || out.Status != domain.StatusFailed {
+		t.Fatalf("output = %+v, want failed status", out)
+	}
+
+	fc := charge.(*fakeCharge)
+	if fc.gotMethod != domain.MethodCOD {
+		t.Errorf("gateway saw method %q, want cod", fc.gotMethod)
+	}
+
+	fr := repo.(*fakeRepo)
+	if len(fr.statusUpdates) != 1 || fr.statusUpdates[0].status != domain.StatusFailed {
+		t.Fatalf("payments.status = %+v, want exactly one failed", fr.statusUpdates)
+	}
+	// order.mark_paid must never run: orders.status stays wherever Validate
+	// found it (pending) — a cod attempt must not move it.
+	if log.has("order.mark_paid") {
+		t.Errorf("order marked paid after a cod decline: %v", log.calls)
+	}
+	if log.has("notify.send") {
+		t.Errorf("notify ran for a cod decline: %v", log.calls)
 	}
 }
 

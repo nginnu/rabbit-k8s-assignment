@@ -7,9 +7,26 @@ import {
   getUserId,
   getSessionId,
   createPayment,
+  PaymentMethod,
   PaymentResult,
 } from "@/lib/api";
 import TraceBadge from "@/components/TraceBadge";
+
+// Labels + copy for the four methods payment-svc accepts. "cod" carries a
+// `failsAlways` flag so the form can call out that its failure is the
+// gateway declining the method — not the chaos knobs below it, and not
+// something the shopper did wrong.
+const PAYMENT_METHODS: {
+  value: PaymentMethod;
+  label: string;
+  icon: string;
+  failsAlways?: boolean;
+}[] = [
+  { value: "card", label: "Card", icon: "💳" },
+  { value: "truemoney", label: "TrueMoney", icon: "📱" },
+  { value: "gwallet", label: "GWallet", icon: "👛" },
+  { value: "cod", label: "Cash on Delivery", icon: "📦", failsAlways: true },
+];
 
 function PayForm() {
   const router = useRouter();
@@ -18,6 +35,7 @@ function PayForm() {
   const [orderId, setOrderId] = useState("");
   const [amount, setAmount] = useState("");
   const [productName, setProductName] = useState("");
+  const [method, setMethod] = useState<PaymentMethod | "">("");
   const [errorRate, setErrorRate] = useState("0");
   const [latencyMs, setLatencyMs] = useState("0");
   const [loading, setLoading] = useState(false);
@@ -40,6 +58,7 @@ function PayForm() {
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    if (!method) return; // guarded by the disabled submit button too
     setError("");
     setResult(null);
     setLoading(true);
@@ -51,6 +70,7 @@ function PayForm() {
       // figure this page displays back to the shopper before they submit.
       const res = await createPayment(
         Number(orderId),
+        method,
         Number(errorRate),
         Number(latencyMs)
       );
@@ -144,6 +164,43 @@ function PayForm() {
             </div>
           )}
 
+          <fieldset className="rounded-xl border border-slate-200 bg-white/70 p-4">
+            <legend className="px-2 text-xs font-bold uppercase tracking-wider text-slate-600">
+              Payment method
+            </legend>
+            <div className="grid grid-cols-2 gap-3 mt-1">
+              {PAYMENT_METHODS.map((m) => (
+                <label
+                  key={m.value}
+                  className={`flex items-center gap-2 rounded-xl border px-3 py-2.5 text-sm cursor-pointer transition ${
+                    method === m.value
+                      ? "border-sky-400 bg-sky-50 ring-1 ring-sky-300"
+                      : "border-slate-200 bg-white hover:border-slate-300"
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="method"
+                    value={m.value}
+                    checked={method === m.value}
+                    onChange={() => setMethod(m.value)}
+                    required
+                    className="accent-sky-600"
+                  />
+                  <span>{m.icon}</span>
+                  <span className="font-medium text-slate-700">{m.label}</span>
+                </label>
+              ))}
+            </div>
+            {method === "cod" && (
+              <p className="mt-3 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
+                ⚠️ The gateway declines Cash on Delivery every time — that's
+                this method, not a mistake on your end. It'll fail on submit
+                so you can follow the trace id below into the logs.
+              </p>
+            )}
+          </fieldset>
+
           <fieldset className="rounded-xl border border-dashed border-sky-300/70 bg-sky-50/50 p-4">
             <legend className="px-2 text-xs font-bold uppercase tracking-wider text-sky-700">
               🧪 Chaos Knobs{" "}
@@ -185,7 +242,7 @@ function PayForm() {
 
           <button
             type="submit"
-            disabled={loading}
+            disabled={loading || !method}
             className="btn-primary w-full text-base py-3"
           >
             {loading ? (
@@ -193,6 +250,8 @@ function PayForm() {
                 <span className="h-4 w-4 rounded-full border-2 border-white/60 border-t-white animate-spin" />
                 Processing…
               </>
+            ) : !method ? (
+              "Choose a payment method"
             ) : amount ? (
               <>
                 Pay ฿{Number(amount).toLocaleString()}

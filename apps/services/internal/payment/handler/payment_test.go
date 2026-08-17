@@ -33,11 +33,11 @@ type stubRepo struct {
 	findErr   error
 }
 
-func (s *stubRepo) CreatePending(_ context.Context, orderID int, amount float64) (*domain.Payment, error) {
+func (s *stubRepo) CreatePending(_ context.Context, orderID int, amount float64, method domain.PaymentMethod) (*domain.Payment, error) {
 	if s.createErr != nil {
 		return nil, s.createErr
 	}
-	return &domain.Payment{ID: 42, OrderID: orderID, Amount: amount, Status: domain.StatusPending}, nil
+	return &domain.Payment{ID: 42, OrderID: orderID, Amount: amount, Method: method, Status: domain.StatusPending}, nil
 }
 
 func (s *stubRepo) UpdateStatus(_ context.Context, _ int, _ domain.PaymentStatus, _ string) error {
@@ -78,10 +78,12 @@ func (stubOrder) MarkPaid(context.Context, int) error { return nil }
 type stubCharge struct {
 	err       error
 	gotAmount float64
+	gotMethod domain.PaymentMethod
 }
 
-func (s *stubCharge) Charge(_ context.Context, amount float64, _ gateway.ChaosHeaders) (*domain.ChargeResult, error) {
+func (s *stubCharge) Charge(_ context.Context, amount float64, method domain.PaymentMethod, _ gateway.ChaosHeaders) (*domain.ChargeResult, error) {
 	s.gotAmount = amount
+	s.gotMethod = method
 	if s.err != nil {
 		return nil, s.err
 	}
@@ -144,7 +146,7 @@ func do(r *gin.Engine, method, path, token, body string) *httptest.ResponseRecor
 func TestCreatePaymentHappyPath(t *testing.T) {
 	r := newRouter(&stubRepo{}, &stubCharge{}, stubOrder{})
 
-	rec := do(r, http.MethodPost, "/payments", signedToken(t, 1), `{"order_id":7}`)
+	rec := do(r, http.MethodPost, "/payments", signedToken(t, 1), `{"order_id":7,"method":"card"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
 	}
@@ -171,7 +173,7 @@ func TestCreatePaymentIgnoresClientSuppliedAmount(t *testing.T) {
 	charge := &stubCharge{}
 	r := newRouter(&stubRepo{}, charge, stubOrder{amount: 3290})
 
-	rec := do(r, http.MethodPost, "/payments", signedToken(t, 1), `{"order_id":7,"amount":1}`)
+	rec := do(r, http.MethodPost, "/payments", signedToken(t, 1), `{"order_id":7,"amount":1,"method":"card"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
 	}
@@ -186,7 +188,7 @@ func TestCreatePaymentIgnoresClientSuppliedAmount(t *testing.T) {
 func TestCreatePaymentChargeDeclinedIs402(t *testing.T) {
 	r := newRouter(&stubRepo{}, &stubCharge{err: errors.New("gateway declined")}, stubOrder{})
 
-	rec := do(r, http.MethodPost, "/payments", signedToken(t, 1), `{"order_id":7}`)
+	rec := do(r, http.MethodPost, "/payments", signedToken(t, 1), `{"order_id":7,"method":"card"}`)
 	if rec.Code != http.StatusPaymentRequired {
 		t.Fatalf("status = %d, want 402; body: %s", rec.Code, rec.Body.String())
 	}
@@ -203,7 +205,7 @@ func TestCreatePaymentChargeDeclinedIs402(t *testing.T) {
 func TestCreatePaymentUpstreamErrorIs500(t *testing.T) {
 	r := newRouter(&stubRepo{}, &stubCharge{}, stubOrder{validateErr: errors.New("order-svc down")})
 
-	rec := do(r, http.MethodPost, "/payments", signedToken(t, 1), `{"order_id":7}`)
+	rec := do(r, http.MethodPost, "/payments", signedToken(t, 1), `{"order_id":7,"method":"card"}`)
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want 500 for a non-charge failure", rec.Code)
 	}
@@ -216,15 +218,69 @@ func TestCreatePaymentRejectsBadBody(t *testing.T) {
 		name string
 		body string
 	}{
-		{"missing order_id", `{}`},
-		{"zero order_id", `{"order_id":0}`},
+		{"missing order_id", `{"method":"card"}`},
+		{"zero order_id", `{"order_id":0,"method":"card"}`},
 		{"garbage", `not json`},
+		{"missing method", `{"order_id":7}`},
+		{"empty method", `{"order_id":7,"method":""}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := do(r, http.MethodPost, "/payments", signedToken(t, 1), tc.body)
 			if rec.Code != http.StatusBadRequest {
 				t.Errorf("status = %d, want 400; body: %s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+// A method outside the four the schema and the gateway both know about must
+// die here, at the handler, never reach ChargeGateway.Charge. stubCharge
+// would happily record whatever it is handed; the assertion on gotMethod
+// being empty is what proves the handler never called it at all.
+func TestCreatePaymentRejectsUnknownMethod(t *testing.T) {
+	charge := &stubCharge{}
+	r := newRouter(&stubRepo{}, charge, stubOrder{})
+
+	cases := []string{"bitcoin", "CARD", "cash", " card"}
+	for _, method := range cases {
+		t.Run(method, func(t *testing.T) {
+			body := `{"order_id":7,"method":"` + method + `"}`
+			rec := do(r, http.MethodPost, "/payments", signedToken(t, 1), body)
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("method %q: status = %d, want 400; body: %s", method, rec.Code, rec.Body.String())
+			}
+		})
+	}
+	if charge.gotMethod != "" {
+		t.Errorf("gateway was called with an unvalidated method %q", charge.gotMethod)
+	}
+}
+
+// The four accepted channels, one call each, asserting the exact value that
+// reaches ChargeGateway.Charge — not just that the request was accepted.
+func TestCreatePaymentAcceptsAllFourMethods(t *testing.T) {
+	methods := []domain.PaymentMethod{domain.MethodCard, domain.MethodTrueMoney, domain.MethodGWallet, domain.MethodCOD}
+	for _, m := range methods {
+		t.Run(string(m), func(t *testing.T) {
+			charge := &stubCharge{}
+			if m == domain.MethodCOD {
+				charge.err = errors.New("cod settlement is not supported by this gateway")
+			}
+			r := newRouter(&stubRepo{}, charge, stubOrder{})
+
+			body := `{"order_id":7,"method":"` + string(m) + `"}`
+			rec := do(r, http.MethodPost, "/payments", signedToken(t, 1), body)
+
+			if m == domain.MethodCOD {
+				if rec.Code != http.StatusPaymentRequired {
+					t.Fatalf("cod: status = %d, want 402; body: %s", rec.Code, rec.Body.String())
+				}
+			} else if rec.Code != http.StatusOK {
+				t.Fatalf("%s: status = %d, want 200; body: %s", m, rec.Code, rec.Body.String())
+			}
+			if charge.gotMethod != m {
+				t.Errorf("gateway saw method %q, want %q", charge.gotMethod, m)
 			}
 		})
 	}

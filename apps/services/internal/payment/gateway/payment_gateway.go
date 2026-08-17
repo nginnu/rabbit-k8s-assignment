@@ -49,13 +49,16 @@ type ChaosHeaders struct {
 	ErrorType string
 }
 
-// Charge sends POST /charge with amount and forwards chaos headers.
-func (m *PaymentGatewayClient) Charge(ctx context.Context, amount float64, chaos ChaosHeaders) (*domain.ChargeResult, error) {
-	ctx, span := tracer.Start(ctx, "charge card")
+// Charge sends POST /charge with amount and method, and forwards chaos headers.
+func (m *PaymentGatewayClient) Charge(ctx context.Context, amount float64, method domain.PaymentMethod, chaos ChaosHeaders) (*domain.ChargeResult, error) {
+	ctx, span := tracer.Start(ctx, "charge "+string(method))
 	defer span.End()
-	span.SetAttributes(attribute.Float64("payment.amount", amount))
+	span.SetAttributes(
+		attribute.Float64("payment.amount", amount),
+		attribute.String("payment.method", string(method)),
+	)
 
-	payload, _ := json.Marshal(map[string]float64{"amount": amount})
+	payload, _ := json.Marshal(map[string]any{"amount": amount, "method": string(method)})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, m.baseURL+"/charge", bytes.NewReader(payload))
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())

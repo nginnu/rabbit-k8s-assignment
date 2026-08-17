@@ -27,13 +27,14 @@ func New(db *gorm.DB) *PaymentRepo {
 }
 
 // CreatePending inserts a payment with status=pending.
-func (r *PaymentRepo) CreatePending(ctx context.Context, orderID int, amount float64) (*domain.Payment, error) {
+func (r *PaymentRepo) CreatePending(ctx context.Context, orderID int, amount float64, method domain.PaymentMethod) (*domain.Payment, error) {
 	ctx, span := tracer.Start(ctx, "record pending payment")
 	defer span.End()
 
 	p := domain.Payment{
 		OrderID: orderID,
 		Amount:  amount,
+		Method:  method,
 		Status:  domain.StatusPending,
 	}
 	if err := r.db.WithContext(ctx).Create(&p).Error; err != nil {

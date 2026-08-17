@@ -69,12 +69,16 @@ func main() {
 	r.POST("/charge", func(c *gin.Context) {
 		var body struct {
 			Amount float64 `json:"amount" binding:"required,gt=0"`
+			Method string  `json:"method" binding:"required,oneof=card truemoney gwallet cod"`
 		}
 		if err := c.ShouldBindJSON(&body); err != nil {
 			// The discarded error this replaces let a malformed body fall
 			// through with Amount at its zero value: a 0-amount charge that
 			// still answered 200 {"status":"ok"} — a payment "succeeding"
-			// for an amount nobody actually charged.
+			// for an amount nobody actually charged. oneof on Method closes
+			// the same gap for a channel this gateway does not recognize:
+			// it fails here with a 400 body it can quote, not silently at
+			// the DB's enum constraint two services upstream.
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
@@ -92,10 +96,28 @@ func main() {
 			attribute.Float64("chaos.error_rate", errRate),
 			attribute.Int("chaos.latency_ms", latency),
 			attribute.String("chaos.error_type", errType),
+			attribute.String("payment.method", body.Method),
 		))
 		defer span.End()
 
-		log.InfoContext(ctx, "charge attempt", "amount", body.Amount)
+		log.InfoContext(ctx, "charge attempt", "amount", body.Amount, "method", body.Method)
+
+		// cod is the one channel this gateway deliberately never settles.
+		// It fails before the chaos dial is even read, on every call, with
+		// no dependence on X-Chaos-* — the checkout proof needs a failure
+		// that reproduces 100% of the time, not one gated behind a random
+		// draw. The span carries codes.Error plus the method that declined,
+		// so a Tempo search for a failed cod span does not depend on chaos
+		// headers being set at all; the log line below carries the same two
+		// facts for Loki.
+		if body.Method == "cod" {
+			const reason = "cod settlement is not supported by this gateway"
+			span.SetStatus(codes.Error, reason)
+			span.SetAttributes(attribute.String("payment.decline_reason", reason))
+			log.ErrorContext(ctx, "charge declined", "method", body.Method, "reason", reason)
+			c.JSON(http.StatusPaymentRequired, gin.H{"error": reason})
+			return
+		}
 
 		// Apply base latency
 		if latency > 0 {

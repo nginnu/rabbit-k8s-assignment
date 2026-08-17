@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/nginnu/rabbit-k8s-assignment/apps/services/internal/payment/domain"
 )
 
 // The chaos headers are how Playwright (and the checkout test) steer
@@ -24,7 +26,7 @@ func TestChargeForwardsChaosHeaders(t *testing.T) {
 	defer ts.Close()
 
 	chaos := ChaosHeaders{ErrorRate: "0.5", LatencyMs: "800", ErrorType: "timeout"}
-	out, err := NewPaymentGatewayClient(ts.URL).Charge(context.Background(), 3290, chaos)
+	out, err := NewPaymentGatewayClient(ts.URL).Charge(context.Background(), 3290, domain.MethodCard, chaos)
 	if err != nil {
 		t.Fatalf("Charge error: %v", err)
 	}
@@ -52,7 +54,7 @@ func TestChargeOmitsEmptyChaosHeaders(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	if _, err := NewPaymentGatewayClient(ts.URL).Charge(context.Background(), 100, ChaosHeaders{}); err != nil {
+	if _, err := NewPaymentGatewayClient(ts.URL).Charge(context.Background(), 100, domain.MethodCard, ChaosHeaders{}); err != nil {
 		t.Fatalf("Charge error: %v", err)
 	}
 	if sawAny {
@@ -68,11 +70,14 @@ func TestChargeSendsAmountAsJSON(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	if _, err := NewPaymentGatewayClient(ts.URL).Charge(context.Background(), 3290.50, ChaosHeaders{}); err != nil {
+	if _, err := NewPaymentGatewayClient(ts.URL).Charge(context.Background(), 3290.50, domain.MethodCard, ChaosHeaders{}); err != nil {
 		t.Fatalf("Charge error: %v", err)
 	}
 	if !strings.Contains(string(body), `"amount":3290.5`) {
 		t.Errorf("body = %s, want the amount as JSON", body)
+	}
+	if !strings.Contains(string(body), `"method":"card"`) {
+		t.Errorf("body = %s, want the method as JSON", body)
 	}
 }
 
@@ -98,11 +103,33 @@ func TestChargeDeclinedSurfacesCodeAndBody(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	_, err := NewPaymentGatewayClient(ts.URL).Charge(context.Background(), 100, ChaosHeaders{})
+	_, err := NewPaymentGatewayClient(ts.URL).Charge(context.Background(), 100, domain.MethodCard, ChaosHeaders{})
 	if err == nil {
 		t.Fatal("Charge returned nil on 500, want error")
 	}
 	if !strings.Contains(err.Error(), "500") || !strings.Contains(err.Error(), "gateway declined") {
 		t.Errorf("error = %v, want status code and body in message", err)
+	}
+}
+
+// cod answers 402, which Charge treats the same as any other non-200: an
+// error the usecase turns into a failed payment. The gateway's own decision
+// to decline cod is proven in cmd/payment's own package (it has no test
+// file today — the handler is exercised via tests/checkout.sh against the
+// real binary); what belongs here is that this client does not special-case
+// the status code and surfaces 402 like it would 500.
+func TestChargeCODDeclinedSurfaces402(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusPaymentRequired)
+		_, _ = w.Write([]byte(`{"error":"cod settlement is not supported by this gateway"}`))
+	}))
+	defer ts.Close()
+
+	_, err := NewPaymentGatewayClient(ts.URL).Charge(context.Background(), 100, domain.MethodCOD, ChaosHeaders{})
+	if err == nil {
+		t.Fatal("Charge returned nil on 402, want error")
+	}
+	if !strings.Contains(err.Error(), "402") {
+		t.Errorf("error = %v, want status code 402 in message", err)
 	}
 }

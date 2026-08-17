@@ -181,12 +181,19 @@ export interface PaymentResult {
   error?: string;
 }
 
+// The four methods payment-svc accepts. "cod" is not a bug bucket — the
+// gateway declines it on every call, on purpose, so there's a failure path
+// that reproduces 100% of the time without touching the chaos headers below.
+export type PaymentMethod = "card" | "truemoney" | "gwallet" | "cod";
+
 // amount is not a parameter: the server derives it from the order (joined on
 // products.price) and charges that, never a client-supplied figure. Sending
 // one here — even a correct one — would keep the door open for the next
-// caller to send an incorrect one instead.
+// caller to send an incorrect one instead. method is different: the shopper
+// picks it, so it travels as-is — it just never carries a price with it.
 export async function createPayment(
   orderId: number,
+  method: PaymentMethod,
   chaosErrorRate?: number,
   chaosLatencyMs?: number
 ) {
@@ -200,7 +207,7 @@ export async function createPayment(
 
   return apiFetch<PaymentResult>(`${API_BASE}/payments`, {
     method: "POST",
-    body: JSON.stringify({ order_id: orderId }),
+    body: JSON.stringify({ order_id: orderId, method }),
     headers,
   });
 }

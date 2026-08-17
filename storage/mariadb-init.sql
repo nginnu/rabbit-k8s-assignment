@@ -61,19 +61,32 @@ CREATE TABLE IF NOT EXISTS `orders` (
 -- -----------------------------------------------------------------------------
 -- payments
 -- -----------------------------------------------------------------------------
+-- `method` NOT NULL with no DEFAULT would have sql_mode=STRICT_TRANS_TABLES
+-- reject every INSERT that leaves it out, and leave the ALTER below to invent a
+-- value for the rows already in the table. 'card' answers both explicitly.
 CREATE TABLE IF NOT EXISTS `payments` (
-  `id`          INT                             NOT NULL AUTO_INCREMENT,
-  `order_id`    INT                             NOT NULL,
-  `amount`      DECIMAL(10,2)                   NOT NULL,
-  `status`      ENUM('pending','paid','failed') NOT NULL DEFAULT 'pending',
-  `gateway_ref` VARCHAR(64)                     DEFAULT NULL COMMENT 'reference from the payment gateway',
-  `created_at`  TIMESTAMP                       NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  `updated_at`  TIMESTAMP                       NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `id`          INT                                      NOT NULL AUTO_INCREMENT,
+  `order_id`    INT                                      NOT NULL,
+  `amount`      DECIMAL(10,2)                            NOT NULL,
+  `method`      ENUM('card','truemoney','gwallet','cod') NOT NULL DEFAULT 'card',
+  `status`      ENUM('pending','paid','failed')          NOT NULL DEFAULT 'pending',
+  `gateway_ref` VARCHAR(64)                              DEFAULT NULL COMMENT 'reference from the payment gateway',
+  `created_at`  TIMESTAMP                                NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at`  TIMESTAMP                                NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   INDEX `idx_payments_order`  (`order_id`),
   INDEX `idx_payments_status` (`status`),
   CONSTRAINT `fk_payments_order` FOREIGN KEY (`order_id`) REFERENCES `orders` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- The CREATE above only ever runs on an empty volume. A PVC that already holds
+-- `payments` is skipped by IF NOT EXISTS, so the column would never appear there
+-- while the service writes it — Unknown column 'method', every checkout 500 and
+-- nothing in the schema file to explain why. Restating it is what lets a re-run
+-- of the Job repair a database that predates the column.
+-- Same column, written twice: change one and change the other.
+ALTER TABLE `payments`
+  ADD COLUMN IF NOT EXISTS `method` ENUM('card','truemoney','gwallet','cod') NOT NULL DEFAULT 'card' AFTER `amount`;
 
 -- =============================================================================
 -- Seed Data
