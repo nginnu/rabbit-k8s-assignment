@@ -93,18 +93,32 @@ fi
 # The trace id comes back in a response header, which is what makes a specific
 # request findable later rather than searching by time.
 headers=$(mktemp)
-curl -sS -o /dev/null -D "$headers" --max-time 15 \
+paybody=$(mktemp)
+curl -sS -o "$paybody" -D "$headers" --max-time 15 \
   -X POST "$BASE/api/payments" \
   -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
   -d "{\"order_id\":$order_id,\"amount\":$AMOUNT}" 2>/dev/null
 trace=$(grep -i '^traceresponse:' "$headers" | tr -d '\r' | sed 's/.*: *//' | cut -d- -f2)
-rm -f "$headers"
+payment_id=$(json "d['payment_id']" <"$paybody")
+rm -f "$headers" "$paybody"
 
 if [ -n "$trace" ]; then
   ok "order $order_id paid, trace $trace"
 else
   bad "no traceresponse header — the middleware is not returning the trace id"
   summary
+fi
+
+# A failing notification is telemetry too: /notify-failed logs a five-line
+# error burst, and the Loki check below proves the pipeline carries failures,
+# not only the happy path. Real ids, not zeros — the handler rejects id 0
+# with a 400.
+fail_code=$(status POST /notification/notify-failed \
+  "{\"order_id\":$order_id,\"payment_id\":${payment_id:-1},\"amount\":$AMOUNT,\"user_id\":1}" "$token")
+if [ "$fail_code" = "500" ]; then
+  ok "notify-failed answered 500 — a failure is now flowing through the pipeline"
+else
+  bad "notify-failed answered $fail_code, want 500"
 fi
 
 note "waiting ${SETTLE}s for telemetry to land"
@@ -125,16 +139,19 @@ print(' '.join(sorted(out)))" 2>/dev/null)
 
 # No service mesh sits on this path — that returns in a later stage. Nothing
 # propagates trace context for the application, so it has to pass traceparent
-# itself. Three services in one trace is the evidence that it does.
+# itself. Four services in one trace is the evidence that it does:
+# notification joined the checkout when payment-svc started calling it, and it
+# propagates the same way (otelhttp both ends) — a regression in either hop
+# shows up here as a missing service.
 missing=""
-for svc in platform-local-payment-svc platform-local-order-svc platform-local-mock-payment; do
+for svc in platform-local-payment-svc platform-local-order-svc platform-local-mock-payment platform-local-notification; do
   case " $services " in
     *" $svc "*) : ;;
     *) missing="$missing ${svc#platform-local-}" ;;
   esac
 done
 if [ -z "$missing" ]; then
-  ok "one trace spans payment-svc, order-svc and mock-payment"
+  ok "one trace spans payment-svc, order-svc, mock-payment and notification"
 else
   bad "trace is missing:$missing — context is not propagating"
   note "saw: ${services:-nothing}"
@@ -180,6 +197,25 @@ if [ "${lines:-0}" -gt 0 ]; then
   ok "$lines log lines across $log_svcs services carry this trace id"
 else
   bad "no logs found for this trace — logs and traces are not correlated"
+fi
+
+# The notify-failed burst above went out over OTLP like every other log line —
+# this is the check that says failures reach Loki too, labelled with the
+# service that emitted them, not only the pod log Alloy would have shipped in
+# the pre-OTLP days.
+burst_json=$(obs_get loki 3100 \
+  "/loki/api/v1/query_range?query=%7Bservice_name%3D%22platform-local-notification%22%7D%20%7C%3D%20%22notification%20delivery%20failed%22&limit=10&start=${start}000000000")
+
+burst_lines=$(printf '%s' "$burst_json" | python3 -c "
+import json, sys
+try: d = json.load(sys.stdin)
+except Exception: print(0); sys.exit()
+print(sum(len(r.get('values', [])) for r in d.get('data', {}).get('result', [])))" 2>/dev/null)
+
+if [ "${burst_lines:-0}" -ge 1 ]; then
+  ok "the notification failure burst reached Loki"
+else
+  bad "no \"notification delivery failed\" line in Loki — error logs are not reaching the pipeline"
 fi
 
 section "metrics reached prometheus"

@@ -125,12 +125,13 @@ for b in d.get('batches', []):
     out.add((at.get('service.name') or '?').replace('platform-local-', ''))
 print(' '.join(sorted(out)))" 2>/dev/null)
 
-# Payment calls orders to validate, the bank to charge, then orders again to
-# mark it paid. All three in one trace is the thing worth proving: no service
-# mesh sits on this path (that returns in a later stage), so nothing propagates
-# context for you — the application passes traceparent itself.
+# Payment calls orders to validate, the bank to charge, orders again to mark
+# it paid, then notification to announce it. All four in one trace is the
+# thing worth proving: no service mesh sits on this path (that returns in a
+# later stage), so nothing propagates context for you — the application passes
+# traceparent itself.
 missing=""
-for svc in payment-svc order-svc mock-payment; do
+for svc in payment-svc order-svc mock-payment notification; do
   case " $services " in
     *" $svc "*) : ;;
     *) missing="$missing $svc" ;;
@@ -141,6 +142,28 @@ if [ -z "$missing" ]; then
 else
   bad "trace is missing$missing — context is not propagating"
   note "saw: ${services:-nothing}"
+fi
+
+# The notify leg is the newest hop and the easiest to silently lose: the
+# payment has already cleared when it runs, so a checkout where notification
+# was skipped still passes every check above. The span by name is the proof
+# the leg ran inside THIS trace, not just somewhere in the system.
+notify_span=$(printf '%s' "$trace_json" | python3 -c "
+import json, sys
+try: d = json.load(sys.stdin)
+except Exception: print(0); sys.exit()
+n = 0
+for b in d.get('batches', []):
+    for ss in b.get('instrumentationLibrarySpans', []) + b.get('scopeSpans', []):
+        for s in ss.get('spans', []):
+            if s.get('name') in ('send notification', 'POST /notify'):
+                n += 1
+print(n)" 2>/dev/null)
+
+if [ "${notify_span:-0}" -ge 1 ]; then
+  ok "the notify leg is a span in this trace"
+else
+  bad "no \"send notification\" span — payment completed without notifying"
 fi
 
 db=$(printf '%s' "$trace_json" | python3 -c "

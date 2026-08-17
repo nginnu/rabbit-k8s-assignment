@@ -71,7 +71,7 @@ func main() {
 	}
 
 	repo := repository.New(gormDB)
-	uc := usecase.New(repo, redisClient)
+	uc := usecase.New(repo, usecase.NewRedisCache(redisClient))
 	h := handler.New(uc)
 
 	gin.SetMode(gin.ReleaseMode)
