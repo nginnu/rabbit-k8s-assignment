@@ -131,8 +131,14 @@ export function setup() {
 }
 
 export default function (data) {
-  const res = http.get(`${BASE}/api/products`, {
+  // GET /api/orders, not /api/products: the AnalysisTemplate measures
+  // service="order-svc", and the product list moved to catalog-svc with the
+  // split — pointing this generator at the catalog would leave the canary
+  // measuring no traffic at all, which the query scores as NaN and fails by
+  // design. Listing the user's own orders is the cheapest authed read
+  // order-svc has.
+  const res = http.get(`${BASE}/api/orders`, {
     headers: { Authorization: `Bearer ${data.token}` },
   });
-  check(res, { 'products request succeeded': (r) => r.status === 200 });
+  check(res, { 'orders request succeeded': (r) => r.status === 200 });
 }
