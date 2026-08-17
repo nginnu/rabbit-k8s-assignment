@@ -18,12 +18,12 @@ Istio gateway
   ├── /api/auth      ──▶ auth-svc      ──▶ MariaDB, Redis (sessions)
   ├── /api/products  ──▶ order-svc     ──▶ MariaDB
   ├── /api/orders    ──▶ order-svc     ──▶ MariaDB
-  ├── /api/payments  ──▶ payment-svc   ──▶ order-svc, mock-payment, MariaDB
+  ├── /api/payments  ──▶ payment-svc   ──▶ order-svc, payment-gateway, MariaDB
   ├── /dummy         ──▶ dummy
   └── /              ──▶ web-ui (Next.js)
 
-mock-payment  — no route, stands in for an external bank. payment-svc calls
-                it at http://mock-payment.demo.svc.cluster.local; nothing
+payment-gateway  — no route, stands in for an external bank. payment-svc calls
+                it at http://payment-gateway.demo.svc.cluster.local; nothing
                 outside the mesh can reach it directly.
 
 platform-config — no route, no pod. Renders one ConfigMap, `app-config`, that
@@ -34,7 +34,7 @@ platform-config — no route, no pod. Renders one ConfigMap, `app-config`, that
 
 | Namespace | What |
 |---|---|
-| `demo` | 5 routed services + mock-payment (unrouted) + platform-config (ConfigMap only, no pod) — 7 Helm releases, 6 workloads |
+| `demo` | 5 routed services + payment-gateway (unrouted) + platform-config (ConfigMap only, no pod) — 7 Helm releases, 6 workloads |
 | `data` | MariaDB, Redis |
 
 Data sits in its own namespace so NetworkPolicy is written about namespaces,
@@ -98,7 +98,7 @@ service out of rotation on one database blip.
 
 | | Path | Delay | Period | What breaks if wrong |
 |---|---|---|---|---|
-| liveness (auth/order/payment/mock-payment) | `/healthz` | 10s | 15s | too short restarts a pod that's merely slow to start; too long leaves a stuck pod serving errors |
+| liveness (auth/order/payment/payment-gateway) | `/healthz` | 10s | 15s | too short restarts a pod that's merely slow to start; too long leaves a stuck pod serving errors |
 | readiness (same four) | `/healthz` | 5s | 5s | too aggressive routes traffic to a pod before it can actually answer |
 | web-ui | `/` (no `/healthz` in Next.js) | 10s / 5s | 15s / 5s | same as above |
 | dummy | `/healthz`, `/readyz` split | 0s / 0s | 10s / 5s | exists only to demonstrate the split — no real dependency to guard |
@@ -125,7 +125,7 @@ packs against, limits stop one service starving the node. Set per
 | Tier | requests | limits | What breaks if wrong |
 |---|---|---|---|
 | auth / order / payment / web-ui | 50m, 96–128Mi | 500m, 384–512Mi | requests too low overpacks the node; limits too low OOM-kills a Go service under load instead of throttling it |
-| mock-payment, dummy | 20m, 32–64Mi | 200m, 128–256Mi | same failure mode, lower stakes — nothing depends on these staying up |
+| payment-gateway, dummy | 20m, 32–64Mi | 200m, 128–256Mi | same failure mode, lower stakes — nothing depends on these staying up |
 
 CPU limits run ~10× requests (idle, then spike on a request); memory ~4× (a
 Go service that exceeds it gets OOM-killed, not throttled).
@@ -147,7 +147,7 @@ Dockerfile's `nextjs` user, not 10001) and `readOnlyRootFilesystem: false`
 
 `topologySpread` (spreads replicas across the 3 kind nodes) and `pdb: {
 minAvailable: 1 }` (keeps one alive through a drain) are per-service values
-too. `mock-payment` has neither — single replica, nothing depends on it.
+too. `payment-gateway` has neither — single replica, nothing depends on it.
 
 ---
 
@@ -160,7 +160,7 @@ One file per usecase. `make test` runs them all, cheapest first.
 | `routing.sh` | 10 | a path reaching the wrong service, the catch-all shadowing the API |
 | `auth.sh` | 10 | a wrong password being accepted, a missing session id |
 | `checkout.sh` | 10 | the purchase breaking anywhere along the chain |
-| `o11y-stack.sh` | 16 | a component down, otel-collector with no endpoints so telemetry is silently dropped, a trace that never links payment-svc to order-svc and mock-payment, Grafana assets double-prefixed under `/grafana/grafana` |
+| `o11y-stack.sh` | 16 | a component down, otel-collector with no endpoints so telemetry is silently dropped, a trace that never links payment-svc to order-svc and payment-gateway, Grafana assets double-prefixed under `/grafana/grafana` |
 | `o11y-journey.sh` | 8 | an order that succeeds while its trace is missing — a purchase nobody can debug afterwards — or logs and traces that do not share a trace id |
 | `tls-proof.sh` | 4 | credentials travelling in plaintext |
 | `resilience.sh` | 9 | data lost with a pod, requests dropped during a replacement |

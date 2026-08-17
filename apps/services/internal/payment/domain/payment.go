@@ -26,7 +26,7 @@ type Payment struct {
 // TableName overrides gorm table name.
 func (Payment) TableName() string { return "payments" }
 
-// ChargeResult is the response from mock-payment gateway.
+// ChargeResult is the response from the payment gateway.
 type ChargeResult struct {
 	Status string `json:"status"`
 	Ref    string `json:"ref"`

@@ -10,9 +10,9 @@ import (
 )
 
 // The chaos headers are how Playwright (and the checkout test) steer
-// mock-payment's failure modes through payment-svc. If this forwarding breaks,
+// the gateway's failure modes through payment-svc. If this forwarding breaks,
 // every chaos test silently stops testing chaos and starts testing the happy
-// path twice — so the headers are asserted at the sender, not at the mock.
+// path twice — so the headers are asserted at the sender, not at the gateway.
 func TestChargeForwardsChaosHeaders(t *testing.T) {
 	var gotRate, gotLatency, gotType string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -24,7 +24,7 @@ func TestChargeForwardsChaosHeaders(t *testing.T) {
 	defer ts.Close()
 
 	chaos := ChaosHeaders{ErrorRate: "0.5", LatencyMs: "800", ErrorType: "timeout"}
-	out, err := NewMockPaymentClient(ts.URL).Charge(context.Background(), 3290, chaos)
+	out, err := NewPaymentGatewayClient(ts.URL).Charge(context.Background(), 3290, chaos)
 	if err != nil {
 		t.Fatalf("Charge error: %v", err)
 	}
@@ -37,9 +37,9 @@ func TestChargeForwardsChaosHeaders(t *testing.T) {
 	}
 }
 
-// Empty chaos headers must not be sent at all: mock-payment reads a present
+// Empty chaos headers must not be sent at all: the gateway reads a present
 // header as a real value, and an empty-but-present X-Chaos-Error-Rate parses
-// as 0 — harmless today, but a footgun the moment the mock defaults change.
+// as 0 — harmless today, but a footgun the moment the gateway defaults change.
 func TestChargeOmitsEmptyChaosHeaders(t *testing.T) {
 	var sawAny bool
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -52,7 +52,7 @@ func TestChargeOmitsEmptyChaosHeaders(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	if _, err := NewMockPaymentClient(ts.URL).Charge(context.Background(), 100, ChaosHeaders{}); err != nil {
+	if _, err := NewPaymentGatewayClient(ts.URL).Charge(context.Background(), 100, ChaosHeaders{}); err != nil {
 		t.Fatalf("Charge error: %v", err)
 	}
 	if sawAny {
@@ -68,7 +68,7 @@ func TestChargeSendsAmountAsJSON(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	if _, err := NewMockPaymentClient(ts.URL).Charge(context.Background(), 3290.50, ChaosHeaders{}); err != nil {
+	if _, err := NewPaymentGatewayClient(ts.URL).Charge(context.Background(), 3290.50, ChaosHeaders{}); err != nil {
 		t.Fatalf("Charge error: %v", err)
 	}
 	if !strings.Contains(string(body), `"amount":3290.5`) {
@@ -83,7 +83,7 @@ func TestChargeDeclinedSurfacesCodeAndBody(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	_, err := NewMockPaymentClient(ts.URL).Charge(context.Background(), 100, ChaosHeaders{})
+	_, err := NewPaymentGatewayClient(ts.URL).Charge(context.Background(), 100, ChaosHeaders{})
 	if err == nil {
 		t.Fatal("Charge returned nil on 500, want error")
 	}

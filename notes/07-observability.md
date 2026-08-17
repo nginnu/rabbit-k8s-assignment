@@ -11,7 +11,7 @@ Every service exports OTLP to one collector. The collector splits the three
 signals and forwards each to its own store.
 
 ```
-[ auth / order / payment / mock-payment / web-ui ]
+[ auth / order / payment / payment-gateway / web-ui ]
                     │
                     │  OTLP gRPC :4317   (push, every 10s)
                     ▼
@@ -92,9 +92,9 @@ log below shares it:
 
 Context propagation is the application's job, not Istio's — services pass
 `traceparent` themselves. One trace spanning payment-svc → order-svc →
-mock-payment is the evidence:
+payment-gateway is the evidence:
 
-![Tempo span tree: payment-svc calls order-svc, then mock-payment, ends 402](screenshot/o11y/Screenshot%202569-08-11%20at%2001.17.25.png)
+![Tempo span tree: payment-svc calls order-svc, then payment-gateway, ends 402](screenshot/o11y/Screenshot%202569-08-11%20at%2001.17.25.png)
 
 ![TraceQL query by session_id returning every trace in that checkout](screenshot/o11y/Screenshot%202569-08-11%20at%2001.17.08.png)
 

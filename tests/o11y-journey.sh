@@ -131,7 +131,7 @@ print(' '.join(sorted(out)))" 2>/dev/null)
 # later stage), so nothing propagates context for you — the application passes
 # traceparent itself.
 missing=""
-for svc in payment-svc order-svc mock-payment notification; do
+for svc in payment-svc order-svc payment-gateway notification; do
   case " $services " in
     *" $svc "*) : ;;
     *) missing="$missing $svc" ;;

@@ -73,7 +73,7 @@ else
 fi
 
 # The discriminator used everywhere below: istio only injects a sidecar into
-# auth-svc, order-svc, payment-svc, mock-payment and notification in the api
+# auth-svc, order-svc, payment-svc, payment-gateway and notification in the api
 # namespace (tests/istio.sh). observability, argocd, kube-system and traefik
 # carry no sidecar, so `server: istio-envoy` is never legitimate on a console
 # response — only a storefront route answering in the console's place can

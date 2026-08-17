@@ -44,7 +44,7 @@ swap rather than as a second migration.
                                       │
    ═══ namespace: web ═══                ═══════════ namespace: api ═══════════
    ║   [ web-ui ]        ║                ║ [auth][order]◄►[payment][dummy]  ║
-   ║   ingress: gateway  ║                ║              → [mock-payment]    ║
+   ║   ingress: gateway  ║                ║              → [payment-gateway]    ║
    ╚═════════════════════╝                ╚══════════════════════════════════╝
               default-deny both directions on all six, allow rules named per
               service/namespace — proven both ways only for allow (see below)

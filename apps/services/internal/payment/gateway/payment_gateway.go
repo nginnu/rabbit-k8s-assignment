@@ -15,15 +15,15 @@ import (
 	"go.opentelemetry.io/otel/codes"
 )
 
-// MockPaymentClient calls mock-payment POST /charge.
-type MockPaymentClient struct {
+// PaymentGatewayClient calls the payment gateway POST /charge.
+type PaymentGatewayClient struct {
 	baseURL string
 	client  *http.Client
 }
 
-// NewMockPaymentClient creates a client with otelhttp transport.
-func NewMockPaymentClient(baseURL string) *MockPaymentClient {
-	return &MockPaymentClient{
+// NewPaymentGatewayClient creates a client with otelhttp transport.
+func NewPaymentGatewayClient(baseURL string) *PaymentGatewayClient {
+	return &PaymentGatewayClient{
 		baseURL: baseURL,
 		client: &http.Client{
 			Transport: otelhttp.NewTransport(http.DefaultTransport),
@@ -31,7 +31,7 @@ func NewMockPaymentClient(baseURL string) *MockPaymentClient {
 	}
 }
 
-// ChaosHeaders are forwarded from the incoming request to mock-payment.
+// ChaosHeaders are forwarded from the incoming request to the payment gateway.
 type ChaosHeaders struct {
 	ErrorRate string
 	LatencyMs string
@@ -39,7 +39,7 @@ type ChaosHeaders struct {
 }
 
 // Charge sends POST /charge with amount and forwards chaos headers.
-func (m *MockPaymentClient) Charge(ctx context.Context, amount float64, chaos ChaosHeaders) (*domain.ChargeResult, error) {
+func (m *PaymentGatewayClient) Charge(ctx context.Context, amount float64, chaos ChaosHeaders) (*domain.ChargeResult, error) {
 	ctx, span := tracer.Start(ctx, "charge card")
 	defer span.End()
 	span.SetAttributes(attribute.Float64("payment.amount", amount))
@@ -53,7 +53,7 @@ func (m *MockPaymentClient) Charge(ctx context.Context, amount float64, chaos Ch
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	// Forward chaos headers so Playwright can control mock-payment behavior.
+	// Forward chaos headers so a test run can steer the gateway's failure modes.
 	if chaos.ErrorRate != "" {
 		req.Header.Set("X-Chaos-Error-Rate", chaos.ErrorRate)
 	}
@@ -68,14 +68,14 @@ func (m *MockPaymentClient) Charge(ctx context.Context, amount float64, chaos Ch
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)
-		return nil, fmt.Errorf("call mock-payment: %w", err)
+		return nil, fmt.Errorf("call payment-gateway: %w", err)
 	}
 	defer resp.Body.Close()
 
 	bodyBytes, _ := io.ReadAll(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
-		err := fmt.Errorf("mock-payment returned %d: %s", resp.StatusCode, string(bodyBytes))
+		err := fmt.Errorf("payment-gateway returned %d: %s", resp.StatusCode, string(bodyBytes))
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)
 		return nil, err

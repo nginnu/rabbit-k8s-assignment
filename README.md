@@ -14,7 +14,7 @@ A reproducible Kubernetes deployment, built locally on kind.
    [ web-ui ]    [ auth-svc ]   [ order-svc ]  [ payment-svc ]  [ grafana ]
     ns: web            │              │              │               │
                        │              │              ▼               │
-                       │              │       [ mock-payment ]       │
+                       │              │       [ payment-gateway ]       │
                        │              │        ns: api (all four)    │
                        └──────┬───────┘                              │
                               ▼                                      │
@@ -317,7 +317,7 @@ API server, not a hand-applied label — see `platform/manifests/apps/web/namesp
    ╚═════════════════════╝                ║              both ways                 ║
                                            ║                  │                     ║
                                            ║                  ▼                     ║
-                                           ║           [ mock-payment ]             ║
+                                           ║           [ payment-gateway ]             ║
                                            ║           no gateway ingress           ║
                                            ╚═════════════════════════════════════════╝
               default-deny both directions on all six — every peer above is a

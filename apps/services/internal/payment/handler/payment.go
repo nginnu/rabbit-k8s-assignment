@@ -44,7 +44,7 @@ func (h *PaymentHandler) CreatePayment(c *gin.Context) {
 		return
 	}
 
-	// Extract chaos headers from incoming request to forward to mock-payment.
+	// Extract chaos headers from incoming request to forward to the payment gateway.
 	chaos := gateway.ChaosHeaders{
 		ErrorRate: c.GetHeader("X-Chaos-Error-Rate"),
 		LatencyMs: c.GetHeader("X-Chaos-Latency-Ms"),

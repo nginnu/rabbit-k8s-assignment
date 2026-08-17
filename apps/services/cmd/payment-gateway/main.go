@@ -1,4 +1,4 @@
-// Package main — mock-payment: chaos-controllable external payment gateway
+// Package main — payment-gateway: chaos-controllable external payment gateway
 package main
 
 import (
@@ -27,12 +27,12 @@ import (
 )
 
 // serviceShortName must match the Deployment name in
-// charts/apps/mock-payment/values.yaml — it feeds cfg.ServiceName(), which
+// charts/apps/payment-gateway/values.yaml — it feeds cfg.ServiceName(), which
 // becomes the OTel service.name resource attribute and, after
 // resource_to_telemetry_conversion in Alloy, the service_name label that SLO
 // alert queries match on. A mismatch here makes those queries return zero
 // series with no error (see notes/slo-strategy.md).
-const serviceShortName = "mock-payment"
+const serviceShortName = "payment-gateway"
 
 func main() {
 	ctx := context.Background()

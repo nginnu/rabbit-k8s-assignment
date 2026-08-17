@@ -30,7 +30,7 @@ services:
       # source, not papered over by pretending the service is consistent.
       - { name: PORT, value: "9003" }
       - { name: APP_PORT, value: "9003" }
-      - { name: MOCK_PAYMENT_URL, value: http://mock-payment.api.svc.cluster.local }
+      - { name: PAYMENT_GATEWAY_URL, value: http://payment-gateway.api.svc.cluster.local }
       - { name: ORDER_SVC_URL, value: http://order-svc.api.svc.cluster.local }
       # Required: the Go code panics at startup without it.
       - { name: NOTIFICATION_URL, value: http://notification.api.svc.cluster.local }
@@ -40,7 +40,7 @@ services:
     topologySpread: true
     pdb: { minAvailable: 1 }
 
-    # The other half of the mTLS pair with mock-payment: a sidecar on both ends
+    # The other half of the mTLS pair with payment-gateway: a sidecar on both ends
     # negotiates mTLS on that east-west hop even under PERMISSIVE, which is the
     # gap the mesh exists to close. Edge traffic stays plaintext to Traefik.
     mesh: true  # adds netpol istiod (egress) + alloy-scrape:15020 (ingress)
@@ -55,4 +55,4 @@ services:
       # svc:notification is easy to forget: the settle path now ends with a
       # best-effort notify, so without the rule the call is dropped and payment
       # still succeeds — the miss is silent.
-      egress: [svc:order-svc, svc:mock-payment, svc:notification, mariadb, alloy]
+      egress: [svc:order-svc, svc:payment-gateway, svc:notification, mariadb, alloy]

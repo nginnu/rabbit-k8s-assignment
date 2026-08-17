@@ -1,4 +1,4 @@
-# mock-payment
+# payment-gateway
 #
 # Stands in for an external payment gateway. It has its own release rather than
 # living beside the production services because its lifecycle is different: it
@@ -13,9 +13,9 @@ sharedSecret:
   name: app-secrets
 
 services:
-  mock-payment:
+  payment-gateway:
     image:
-      repository: mock-payment
+      repository: payment-gateway
       tag: v0.1.0
       pullPolicy: Never
     port: 7000

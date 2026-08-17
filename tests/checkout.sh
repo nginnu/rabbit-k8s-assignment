@@ -76,7 +76,7 @@ if [ -n "$gateway_ref" ]; then
   ok "the bank returned a reference"
   note "$gateway_ref"
 else
-  bad "no gateway reference — mock-payment was not reached"
+  bad "no gateway reference — payment-gateway was not reached"
 fi
 
 section "5. confirm"

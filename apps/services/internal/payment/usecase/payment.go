@@ -69,16 +69,16 @@ type (
 type PaymentUsecase struct {
 	repo    PaymentRepository
 	order   OrderGateway
-	mockPay ChargeGateway
+	charge ChargeGateway
 	notify  Notifier
 }
 
 // New creates a PaymentUsecase.
-func New(repo PaymentRepository, order OrderGateway, mockPay ChargeGateway, notify Notifier) *PaymentUsecase {
+func New(repo PaymentRepository, order OrderGateway, charge ChargeGateway, notify Notifier) *PaymentUsecase {
 	return &PaymentUsecase{
 		repo:    repo,
 		order:   order,
-		mockPay: mockPay,
+		charge: charge,
 		notify:  notify,
 	}
 }
@@ -86,7 +86,7 @@ func New(repo PaymentRepository, order OrderGateway, mockPay ChargeGateway, noti
 // ProcessPayment runs the full payment flow per PLAN section 9.3.
 func (u *PaymentUsecase) ProcessPayment(ctx context.Context, in ProcessPaymentInput) (*ProcessPaymentOutput, error) {
 	// order.id goes into baggage before the span is created, so order-svc and
-	// mock-payment pick it up through otelhttp without being told.
+	// payment-gateway pick it up through otelhttp without being told.
 	ctx = withOrderBaggage(ctx, in.OrderID)
 
 	ctx, span := tracer.Start(ctx, "process payment")
@@ -133,8 +133,8 @@ func (u *PaymentUsecase) ProcessPayment(ctx context.Context, in ProcessPaymentIn
 		"order_id", in.OrderID,
 	)
 
-	// Step 3: Call mock-payment gateway to charge.
-	chargeResult, err := u.mockPay.Charge(ctx, in.Amount, in.Chaos)
+	// Step 3: Call the payment gateway to charge.
+	chargeResult, err := u.charge.Charge(ctx, in.Amount, in.Chaos)
 	if err != nil {
 		// Gateway returned error (500) -- mark payment as failed.
 		_ = u.repo.UpdateStatus(ctx, payment.ID, domain.StatusFailed, "")

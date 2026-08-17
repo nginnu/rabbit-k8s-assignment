@@ -9,7 +9,7 @@ this file does not repeat it.
 
 ## 1. Namespaces
 
-Current set: `web` (frontend) · `api` (Go services, mock-payment, notification) ·
+Current set: `web` (frontend) · `api` (Go services, payment-gateway, notification) ·
 `data` · `traefik` · `cert-manager` · `observability` · `argocd` ·
 `argo-rollouts`.
 

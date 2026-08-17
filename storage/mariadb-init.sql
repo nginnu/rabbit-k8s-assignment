@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS `payments` (
   `order_id`    INT                             NOT NULL,
   `amount`      DECIMAL(10,2)                   NOT NULL,
   `status`      ENUM('pending','paid','failed') NOT NULL DEFAULT 'pending',
-  `gateway_ref` VARCHAR(64)                     DEFAULT NULL COMMENT 'reference from mock-payment',
+  `gateway_ref` VARCHAR(64)                     DEFAULT NULL COMMENT 'reference from the payment gateway',
   `created_at`  TIMESTAMP                       NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at`  TIMESTAMP                       NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),

@@ -51,8 +51,8 @@ spec:
             matchExpressions:
               - key: app.kubernetes.io/name
                 operator: In
-                # mock-payment is absent deliberately. config.LoadBase demands
-                # MARIADB_DSN and panics without it, but cmd/mock-payment/main.go
+                # payment-gateway is absent deliberately. config.LoadBase demands
+                # MARIADB_DSN and panics without it, but cmd/payment-gateway/main.go
                 # never calls db.OpenMariaDB — the Secret satisfies that, not a
                 # network path. An allow here would carry no traffic.
                 values: [auth-svc, order-svc, payment-svc]

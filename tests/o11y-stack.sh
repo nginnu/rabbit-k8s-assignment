@@ -144,14 +144,14 @@ print(' '.join(sorted(out)))" 2>/dev/null)
 # propagates the same way (otelhttp both ends) — a regression in either hop
 # shows up here as a missing service.
 missing=""
-for svc in platform-local-payment-svc platform-local-order-svc platform-local-mock-payment platform-local-notification; do
+for svc in platform-local-payment-svc platform-local-order-svc platform-local-payment-gateway platform-local-notification; do
   case " $services " in
     *" $svc "*) : ;;
     *) missing="$missing ${svc#platform-local-}" ;;
   esac
 done
 if [ -z "$missing" ]; then
-  ok "one trace spans payment-svc, order-svc, mock-payment and notification"
+  ok "one trace spans payment-svc, order-svc, payment-gateway and notification"
 else
   bad "trace is missing:$missing — context is not propagating"
   note "saw: ${services:-nothing}"
