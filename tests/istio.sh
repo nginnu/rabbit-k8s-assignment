@@ -108,9 +108,13 @@ for pod in $(kubectl -n "$API_NS" get pods -l app.kubernetes.io/name=auth-svc \
   # access log records the rewritten path. Envoy writes access lines in
   # batches on its own schedule, so the grep gets a wide tail and three
   # attempts — reading once after two seconds flakes between runs.
+  # grep -c, not -q: -q exits at the first match while kubectl is still
+  # writing, the SIGPIPE makes kubectl die with 141, and under lib.sh's
+  # pipefail that flips a found match into a failed check. -c reads the whole
+  # stream, so the producer always finishes.
   for attempt in 1 2 3; do
     if kubectl -n "$API_NS" logs "$pod" -c istio-proxy --tail=200 2>/dev/null \
-      | grep -q '"POST /auth'; then
+      | grep -c '"POST /auth' >/dev/null; then
       found="$pod"
       break 2
     fi
