@@ -24,7 +24,7 @@ A reproducible Kubernetes deployment, built locally on kind.
                                                                      ▼
    every pod ───── OTLP :4317 ─────► [ alloy ] ─────► [ prometheus · loki · tempo ]
 
-   delivery:  Argo Rollouts (canary)  ·  Argo CD (GitOps, https://localhost/argocd)
+   delivery:  Argo Rollouts (canary)  ·  Argo CD (GitOps, https://argocd.localhost)
 ```
 
 Istio is out of this stack — removed completely, no `istiod`, no `istio-system`.
@@ -54,7 +54,7 @@ clean cluster: [docs/rebuild.md](docs/rebuild.md).
 | | | |
 |---|---|---|
 | ![the shop](notes/screenshot/common/Screenshot%202569-08-10%20at%2020.31.57.png) | ![grafana](notes/screenshot/common/Screenshot%202569-08-11%20at%2001.02.01.png) | ![argocd](notes/screenshot/argocd/Screenshot%202569-08-10%20at%2016.06.32.png) |
-| `https://localhost` — log in with `alice` / `password` (any of the seeded users, same password) | `https://localhost/grafana` — anonymous access, opens straight into Admin | `https://localhost/argocd` — user `admin`, password from the chart's generated secret |
+| `https://localhost` — log in with `alice` / `password` (any of the seeded users, same password) | `https://grafana.localhost` — anonymous access, opens straight into Admin | `https://argocd.localhost` — user `admin`, password from the chart's generated secret |
 
 ```sh
 kubectl -n argocd get secret argocd-initial-admin-secret \

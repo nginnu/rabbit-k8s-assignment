@@ -1,4 +1,4 @@
-# catalog-svc
+# catalog
 #
 # The product list. Split out of order-svc: browsing is the storefront's
 # hottest read and has nothing to do with the order lifecycle, so it gets its
@@ -13,9 +13,9 @@ sharedSecret:
   name: app-secrets
 
 services:
-  catalog-svc:
+  catalog:
     image:
-      repository: catalog-svc
+      repository: catalog
       tag: v0.1.0
       pullPolicy: Never
     port: 9004

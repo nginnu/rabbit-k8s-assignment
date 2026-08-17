@@ -62,8 +62,13 @@ else
 fi
 
 section "the token is what opens the api"
-expect "no token               " 401 "$(status GET /api/products)"
-expect "junk token             " 401 "$(status GET /api/products '' 'not-a-real-token')"
-expect "valid token            " 200 "$(status GET /api/products '' "$token")"
+# /api/orders, not /api/products: the catalog went public, so a 401-then-200
+# against /api/products would now pass on every request regardless of the
+# token — this suite would stay green while proving nothing. /api/orders
+# stays behind middleware.Auth, so 401/401/200 here is still contingent on
+# the token actually being valid.
+expect "no token               " 401 "$(status GET /api/orders)"
+expect "junk token             " 401 "$(status GET /api/orders '' 'not-a-real-token')"
+expect "valid token            " 200 "$(status GET /api/orders '' "$token")"
 
 summary

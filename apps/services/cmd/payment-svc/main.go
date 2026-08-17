@@ -97,8 +97,11 @@ func main() {
 	// journey is provable rather than inferred from the absence of an error.
 	authorized.GET("/payments/:id/success", paymentHandler.PaymentSuccess)
 
-	// HTTP server with graceful shutdown
-	port := envOr("PORT", "9003")
+	// HTTP server with graceful shutdown. APP_PORT, not PORT: every sibling
+	// service (order-svc, catalog, payment-gateway) reads APP_PORT, and
+	// this was the one holdout reading a different variable for the same
+	// setting.
+	port := envOr("APP_PORT", "9003")
 	srv := &http.Server{
 		Addr:    ":" + port,
 		Handler: r,

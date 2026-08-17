@@ -8,8 +8,8 @@
 # Traefik ranks a match by path length first and barely weighs hostname, so
 # /api/auth (any host) outranked Host("kiali.localhost") && PathPrefix("/") —
 # measured priorities were 10904 vs 17. kiali.localhost/api/auth/info came
-# back from auth-svc: 404, `server: istio-envoy`,
-# `x-envoy-decorator-operation: auth-svc.api.svc.cluster.local:80/*`. Kiali's
+# back from auth: 404, `server: istio-envoy`,
+# `x-envoy-decorator-operation: auth.api.svc.cluster.local:80/*`. Kiali's
 # own answer for that path, read straight from the pod by port-forward before
 # this test was written, is 200 with body {"sessionInfo":{},"strategy":
 # "anonymous"}.
@@ -34,7 +34,7 @@ require_cluster
 # code <url> [method] [data] — HTTP status only, "000" if the call did not
 # complete. GET by default, same as lib.sh's status(); POST with a body is
 # passed explicitly where a handler only answers on POST (auth/login below —
-# a bare GET hits no route inside auth-svc and returns 404 of its own, which
+# a bare GET hits no route inside auth and returns 404 of its own, which
 # would misread as "the console answered" if this defaulted silently).
 code() {
   local url="$1" method="${2:-GET}" data="${3:-}"
@@ -61,7 +61,7 @@ header() {
 section "the exact regression: kiali answers its own auth endpoint"
 
 # 404 is the bug back — the request reached the gateway (not 000) but landed
-# on auth-svc, which has no /api/auth/info handler and returns plain-text 404.
+# on auth, which has no /api/auth/info handler and returns plain-text 404.
 # A fixed route reaches Kiali's own handler instead.
 expect "kiali.localhost/api/auth/info status" 200 "$(code https://kiali.localhost/api/auth/info)"
 
@@ -73,15 +73,15 @@ else
 fi
 
 # The discriminator used everywhere below: istio only injects a sidecar into
-# auth-svc, order-svc, payment-svc, payment-gateway and notification in the api
-# namespace (tests/istio.sh). observability, argocd, kube-system and traefik
-# carry no sidecar, so `server: istio-envoy` is never legitimate on a console
-# response — only a storefront route answering in the console's place can
-# produce it.
+# auth, catalog, order-svc, payment-svc, payment and
+# notification in the api namespace (tests/istio.sh). observability, argocd,
+# kube-system and traefik carry no sidecar, so `server: istio-envoy` is never
+# legitimate on a console response — only a storefront route answering in the
+# console's place can produce it.
 kiali_server=$(header server https://kiali.localhost/api/auth/info)
 case "$kiali_server" in
   *istio-envoy*)
-    bad "kiali.localhost/api/auth/info still carries server: istio-envoy — auth-svc answered, not kiali" ;;
+    bad "kiali.localhost/api/auth/info still carries server: istio-envoy — auth answered, not kiali" ;;
   *)
     ok "kiali.localhost/api/auth/info carries no istio-envoy fingerprint — kiali answered" ;;
 esac
@@ -91,32 +91,53 @@ section "the storefront still works on its own host"
 # Scoping api/web-ui to hostnames: [localhost] can overcorrect as easily as
 # fix the bug — a typo'd host or a dropped entry breaks the storefront the
 # same way the missing hostnames hid it. routing.sh already checks this path
-# status by status; this adds proof the response actually came from auth-svc,
+# status by status; this adds proof the response actually came from auth,
 # so a route that happens to return 400 for the wrong reason cannot pass
 # silently.
 expect "localhost/api/auth/login status " 400 "$(code https://localhost/api/auth/login POST '{}')"
 
 login_decorator=$(header x-envoy-decorator-operation https://localhost/api/auth/login POST '{}')
 case "$login_decorator" in
-  auth-svc.*)
+  auth.*)
     ok "localhost/api/auth/login answered by $login_decorator" ;;
   "")
-    bad "localhost/api/auth/login carries no x-envoy-decorator-operation — cannot confirm auth-svc answered" ;;
+    bad "localhost/api/auth/login carries no x-envoy-decorator-operation — cannot confirm auth answered" ;;
   *)
-    bad "localhost/api/auth/login answered by $login_decorator, not auth-svc" ;;
+    bad "localhost/api/auth/login answered by $login_decorator, not auth" ;;
+esac
+
+# 50c6c0b moved GET /products off order-svc onto a new catalog and no test
+# anywhere checks which backend actually answers — every existing check on
+# this path only looks at status code and JSON shape, both unchanged by the
+# split. This is that check, same shape as the auth one just above.
+expect "localhost/api/products status     " 200 "$(code https://localhost/api/products)"
+
+products_decorator=$(header x-envoy-decorator-operation https://localhost/api/products)
+case "$products_decorator" in
+  catalog.*)
+    ok "localhost/api/products answered by $products_decorator" ;;
+  "")
+    bad "localhost/api/products carries no x-envoy-decorator-operation — cannot confirm catalog answered" ;;
+  *)
+    bad "localhost/api/products answered by $products_decorator, not catalog" ;;
 esac
 
 section "console hosts are not hijacked by the storefront prefixes"
 
-# 5 console hosts x 5 storefront prefixes that can steal them. Only the
+# 5 console hosts x 4 storefront prefixes that can steal them. Only the
 # istio-envoy fingerprint is checked, never a status code — what each console
 # legitimately answers on a path it does not own (its own 404, its own auth
 # challenge) was not observed ahead of writing this test, and guessing it
 # here would make a false positive read as a pass. Kiali answering 404 for a
 # path of its own, like /api/istio/certs, is not a hijack; the fingerprint is
 # what tells the two apart.
+#
+# /notification dropped from this sweep: its HTTPRoute is gone from the
+# gateway entirely, so there is no storefront route left under this prefix
+# that could hijack a console host — routing.sh proves the edge 404s on it,
+# and a prefix nothing routes cannot be a hijack vector.
 HOSTS="kiali grafana argocd hubble traefik"
-PREFIXES="/api/auth/info /api/products /api/orders /api/payments /notification"
+PREFIXES="/api/auth/info /api/products /api/orders /api/payments"
 
 for host in $HOSTS; do
   for prefix in $PREFIXES; do

@@ -20,9 +20,12 @@ import (
 var tracer = otel.Tracer("payment-svc")
 
 // ProcessPaymentInput is the input for ProcessPayment.
+//
+// There is deliberately no Amount field. The price the client saw when it
+// posted this request is not trusted for anything: order-svc's Validate
+// call below is the only source ProcessPayment reads a price from.
 type ProcessPaymentInput struct {
 	OrderID int
-	Amount  float64
 	UserID  int
 	Chaos   gateway.ChaosHeaders
 }
@@ -67,19 +70,19 @@ type (
 
 // PaymentUsecase contains the business logic for payments.
 type PaymentUsecase struct {
-	repo    PaymentRepository
-	order   OrderGateway
+	repo   PaymentRepository
+	order  OrderGateway
 	charge ChargeGateway
-	notify  Notifier
+	notify Notifier
 }
 
 // New creates a PaymentUsecase.
 func New(repo PaymentRepository, order OrderGateway, charge ChargeGateway, notify Notifier) *PaymentUsecase {
 	return &PaymentUsecase{
-		repo:    repo,
-		order:   order,
+		repo:   repo,
+		order:  order,
 		charge: charge,
-		notify:  notify,
+		notify: notify,
 	}
 }
 
@@ -94,18 +97,20 @@ func (u *PaymentUsecase) ProcessPayment(ctx context.Context, in ProcessPaymentIn
 
 	span.SetAttributes(
 		attribute.Int("order.id", in.OrderID),
-		attribute.Float64("payment.amount", in.Amount),
 		attribute.Int("user.id", in.UserID),
 	)
 
 	slog.InfoContext(ctx, "payment started",
 		"order_id", in.OrderID,
-		"amount", in.Amount,
 		"user_id", in.UserID,
 	)
 
-	// Step 1: Validate order exists and is pending.
-	_, err := u.order.Validate(ctx, in.OrderID)
+	// Step 1: Validate order exists and is pending. order-svc's response is
+	// also where the price comes from — info.Amount, derived server-side
+	// from products.price, is what every later step charges. Nothing in
+	// ProcessPaymentInput can override it because nothing in it carries a
+	// price at all.
+	info, err := u.order.Validate(ctx, in.OrderID)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)
@@ -116,8 +121,14 @@ func (u *PaymentUsecase) ProcessPayment(ctx context.Context, in ProcessPaymentIn
 		return nil, fmt.Errorf("validate order: %w", err)
 	}
 
+	span.SetAttributes(attribute.Float64("payment.amount", info.Amount))
+	slog.InfoContext(ctx, "order validated",
+		"order_id", in.OrderID,
+		"amount", info.Amount,
+	)
+
 	// Step 2: Create pending payment record.
-	payment, err := u.repo.CreatePending(ctx, in.OrderID, in.Amount)
+	payment, err := u.repo.CreatePending(ctx, in.OrderID, info.Amount)
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)
@@ -134,7 +145,7 @@ func (u *PaymentUsecase) ProcessPayment(ctx context.Context, in ProcessPaymentIn
 	)
 
 	// Step 3: Call the payment gateway to charge.
-	chargeResult, err := u.charge.Charge(ctx, in.Amount, in.Chaos)
+	chargeResult, err := u.charge.Charge(ctx, info.Amount, in.Chaos)
 	if err != nil {
 		// Gateway returned error (500) -- mark payment as failed.
 		_ = u.repo.UpdateStatus(ctx, payment.ID, domain.StatusFailed, "")
@@ -184,7 +195,7 @@ func (u *PaymentUsecase) ProcessPayment(ctx context.Context, in ProcessPaymentIn
 	// response — the caller must not depend on the callee's configuration.
 	notifyCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	if err := u.notify.Notify(notifyCtx, payment.ID, in.OrderID, in.Amount, in.UserID); err != nil {
+	if err := u.notify.Notify(notifyCtx, payment.ID, in.OrderID, info.Amount, in.UserID); err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)
 		slog.ErrorContext(ctx, "notification send failed (non-fatal)",

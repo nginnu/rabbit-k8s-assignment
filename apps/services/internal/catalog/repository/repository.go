@@ -30,7 +30,11 @@ func (r *ProductRepository) ListProducts(ctx context.Context) ([]domain.Product,
 	ctx, span := tracer.Start(ctx, "read products")
 	defer span.End()
 
-	var products []domain.Product
+	// gorm's Find leaves a nil slice when zero rows come back. A nil slice
+	// marshals to JSON null, and the frontend's Array.isArray(data) is false
+	// for null — an empty catalog would render as a permanent "Loading
+	// products…" instead of an empty grid. make(..., 0) keeps it non-nil.
+	products := make([]domain.Product, 0)
 	if err := r.db.WithContext(ctx).Order("id").Find(&products).Error; err != nil {
 		span.RecordError(err)
 		return nil, fmt.Errorf("list products: %w", err)

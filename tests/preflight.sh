@@ -278,7 +278,7 @@ else
   bad "pods not ready:"$'\n'"$not_ready"
 fi
 
-# web-ui and notification/auth-svc/catalog-svc/order-svc/payment-svc/payment-gateway/platform-config
+# web-ui and notification/auth/catalog/order-svc/payment-svc/payment/platform-config
 # split across two namespaces now, so this loops rather than reading one.
 mismatched=""
 for ns in $APP_NAMESPACES; do
@@ -394,7 +394,7 @@ print(d.get('status', {}).get('health', {}).get('status', ''),
     ok "argocd application $g is Healthy/Synced"
   else
     bad "argocd application $g: health=${health:-none} sync=${sync:-none}"
-    note "the Application exists but has not converged — check the argocd UI at /argocd"
+    note "the Application exists but has not converged — check the argocd UI at https://argocd.localhost"
   fi
 done
 

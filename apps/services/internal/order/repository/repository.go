@@ -26,7 +26,7 @@ func New(db *gorm.DB) *OrderRepository {
 	return &OrderRepository{db: db}
 }
 
-// ListProducts is gone with the split: catalog-svc owns the product read
+// ListProducts is gone with the split: catalog owns the product read
 // path. The table is still queried below, but only inside order creation to
 // validate the product_id before the insert.
 

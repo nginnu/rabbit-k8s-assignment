@@ -1,15 +1,18 @@
-// Package main — payment-gateway: chaos-controllable external payment gateway
+// Package main — payment: chaos-controllable external payment gateway
 package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -27,12 +30,12 @@ import (
 )
 
 // serviceShortName must match the Deployment name in
-// charts/apps/payment-gateway/values.yaml — it feeds cfg.ServiceName(), which
+// charts/apps/payment/values.yaml — it feeds cfg.ServiceName(), which
 // becomes the OTel service.name resource attribute and, after
 // resource_to_telemetry_conversion in Alloy, the service_name label that SLO
 // alert queries match on. A mismatch here makes those queries return zero
 // series with no error (see notes/slo-strategy.md).
-const serviceShortName = "payment-gateway"
+const serviceShortName = "payment"
 
 func main() {
 	ctx := context.Background()
@@ -52,6 +55,7 @@ func main() {
 
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
+	r.Use(gin.Recovery())
 	r.Use(middleware.CORS())
 
 	// Health endpoint — BEFORE OTel → no trace for healthcheck noise
@@ -63,9 +67,17 @@ func main() {
 	tracer := otel.Tracer(serviceName)
 
 	r.POST("/charge", func(c *gin.Context) {
-		// Parse body (don't validate — it's a mock)
-		var body struct{ Amount float64 }
-		_ = c.ShouldBindJSON(&body)
+		var body struct {
+			Amount float64 `json:"amount" binding:"required,gt=0"`
+		}
+		if err := c.ShouldBindJSON(&body); err != nil {
+			// The discarded error this replaces let a malformed body fall
+			// through with Amount at its zero value: a 0-amount charge that
+			// still answered 200 {"status":"ok"} — a payment "succeeding"
+			// for an amount nobody actually charged.
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 
 		// Read chaos headers
 		errRate, _ := strconv.ParseFloat(c.GetHeader("X-Chaos-Error-Rate"), 64)
@@ -125,9 +137,31 @@ func main() {
 	if port == "" {
 		port = "7000"
 	}
-	log.Info("service ready", "service", serviceName, "port", port)
-	if err := r.Run(":" + port); err != nil {
-		log.Error("server failed", "err", err)
-		os.Exit(1)
+
+	srv := &http.Server{
+		Addr:    ":" + port,
+		Handler: r,
+	}
+
+	go func() {
+		log.Info("service ready", "service", serviceName, "port", port)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Error("server error", "err", err)
+			os.Exit(1)
+		}
+	}()
+
+	// r.Run() blocked here previously, so a rollout's SIGTERM killed the
+	// process mid in-flight charge with no chance to finish it — the same gap
+	// every other service in this repo closes with a graceful Shutdown.
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	log.Info("shutting down")
+	shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Error("server shutdown error", "err", err)
 	}
 }

@@ -20,7 +20,7 @@ import (
 	"github.com/nginnu/rabbit-k8s-assignment/apps/services/internal/shared/middleware"
 )
 
-var tracer = otel.Tracer("auth-svc")
+var tracer = otel.Tracer("auth")
 
 // ErrInvalidCredentials is returned when username or password is wrong.
 var ErrInvalidCredentials = errors.New("invalid credentials")

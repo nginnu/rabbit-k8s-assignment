@@ -86,6 +86,36 @@ func TestAuthRejectsMissingAndBadTokens(t *testing.T) {
 	}
 }
 
+// Before WithValidMethods was added to the parser, the keyfunc returned the
+// same HMAC secret regardless of which signing method the token's header
+// claimed, so a token minted with any HMAC variant — not just HS256 — still
+// verified. This is real alg-confusion surface, not a hypothetical one: it
+// pins verification to a single algorithm rather than trusting every caller
+// to pick HS256 on their own.
+func TestAuthRejectsTokenSignedWithADifferentAlgorithm(t *testing.T) {
+	claims := JWTClaims{
+		UserID: 1,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+		},
+	}
+	// Same secret as every accepted token in this file — only the algorithm
+	// differs, so a rejection here can only be the alg pin, not a bad key.
+	tok, err := jwt.NewWithClaims(jwt.SigningMethodHS384, claims).SignedString([]byte(secret))
+	if err != nil {
+		t.Fatalf("sign HS384: %v", err)
+	}
+
+	r, reached := authedRouter()
+	rec := doGet(r, "/orders", tok)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401 for a non-HS256 token even with the correct secret", rec.Code)
+	}
+	if *reached {
+		t.Error("handler ran on a token signed with a different algorithm")
+	}
+}
+
 func tokenSignedWith(t *testing.T, s string) string {
 	t.Helper()
 	claims := JWTClaims{

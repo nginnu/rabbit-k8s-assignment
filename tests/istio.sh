@@ -43,7 +43,7 @@ section "every api service pod carries a ready sidecar"
 # sidecar appears only after the commit is pushed and Argo syncs — warned
 # about below, not failed on, or every fresh clone is red over a push that has
 # not happened yet.
-for svc in auth-svc catalog-svc order-svc payment-svc payment-gateway; do
+for svc in auth catalog order-svc payment-svc payment; do
   pods=$(kubectl -n "$API_NS" get pods -l app.kubernetes.io/name="$svc" \
     -o jsonpath='{.items[*].metadata.name}' 2>/dev/null)
   if [ -z "$pods" ]; then
@@ -94,15 +94,15 @@ esac
 section "the sidecar is on the request path"
 
 # The login probe, same as routing.sh: it needs no token (400 is the answer
-# that proves arrival), writes nothing, and its target auth-svc is meshed. If
+# that proves arrival), writes nothing, and its target auth is meshed. If
 # the access log shows the request the proxy forwarded it; if not, Traefik is
 # reaching the app port past the mesh and the sidecars are decoration.
 expect "POST /api/auth/login still answers 400" 400 "$(status POST /api/auth/login '{}')"
 
-# auth-svc runs two replicas, and the request lands on one of them — every
+# auth runs two replicas, and the request lands on one of them — every
 # pod's log has to be read before concluding the mesh was bypassed.
 found=""
-for pod in $(kubectl -n "$API_NS" get pods -l app.kubernetes.io/name=auth-svc \
+for pod in $(kubectl -n "$API_NS" get pods -l app.kubernetes.io/name=auth \
   -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
   # The edge rewrites /api/auth to /auth before it reaches the service, so the
   # access log records the rewritten path. Envoy writes access lines in
@@ -125,7 +125,7 @@ done
 if [ -n "$found" ]; then
   ok "$found istio-proxy access log shows the request — traffic flows through the sidecar"
 else
-  bad "no auth-svc sidecar logged the request — the mesh is not on the request path"
+  bad "no auth sidecar logged the request — the mesh is not on the request path"
 fi
 
 section "east-west mTLS is declared, not assumed"

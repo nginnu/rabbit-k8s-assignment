@@ -1,13 +1,13 @@
 # One image per service, selected by the SVC build arg.
 #
-#   docker build --build-arg SVC=auth-svc -t auth-svc apps/services
+#   docker build --build-arg SVC=auth -t auth apps/services
 
 # ─── Stage 1: build ─────────────────────────────────────────────
 # go.mod pins go >= 1.25 (auto-bumped by linter) — image must match
 FROM golang:1.25-alpine AS builder
 
 ARG SVC
-RUN test -n "$SVC" || (echo "ARG SVC is required (e.g. auth-svc)" && exit 1)
+RUN test -n "$SVC" || (echo "ARG SVC is required (e.g. auth)" && exit 1)
 
 WORKDIR /src
 

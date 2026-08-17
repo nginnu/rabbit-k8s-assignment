@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/nginnu/rabbit-k8s-assignment/apps/services/internal/payment/domain"
 
@@ -14,6 +15,15 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 )
+
+// gatewayClientTimeout has to clear the chaos knobs deliberately built into
+// payment-gateway: the storefront's pay page (chaos panel) lets a caller ask
+// for up to 10s of injected latency, and X-Chaos-Error-Type=timeout sleeps
+// 5s before answering 504. A tighter client timeout would turn that
+// legitimate, requested slow response into an indistinguishable connection
+// error. This bound exists only for the case neither of those cover: a
+// payment-gateway pod that is simply hung, with no chaos requested.
+const gatewayClientTimeout = 15 * time.Second
 
 // PaymentGatewayClient calls the payment gateway POST /charge.
 type PaymentGatewayClient struct {
@@ -26,6 +36,7 @@ func NewPaymentGatewayClient(baseURL string) *PaymentGatewayClient {
 	return &PaymentGatewayClient{
 		baseURL: baseURL,
 		client: &http.Client{
+			Timeout:   gatewayClientTimeout,
 			Transport: otelhttp.NewTransport(http.DefaultTransport),
 		},
 	}

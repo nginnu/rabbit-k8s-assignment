@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/nginnu/rabbit-k8s-assignment/apps/services/internal/payment/domain"
 
@@ -14,6 +15,13 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 )
+
+// orderClientTimeout bounds Validate and MarkPaid, both in-cluster calls to a
+// service with no configurable latency of its own (order-svc forwards no
+// chaos headers). Without it, a hung order-svc has no upper bound and holds
+// the checkout request open indefinitely — the failure this client existed
+// to report instead becomes invisible as a stall.
+const orderClientTimeout = 5 * time.Second
 
 var tracer = otel.Tracer("payment-svc")
 
@@ -28,6 +36,7 @@ func NewOrderClient(baseURL string) *OrderClient {
 	return &OrderClient{
 		baseURL: baseURL,
 		client: &http.Client{
+			Timeout:   orderClientTimeout,
 			Transport: otelhttp.NewTransport(http.DefaultTransport),
 		},
 	}

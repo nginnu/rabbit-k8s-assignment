@@ -34,7 +34,12 @@ type ChargeResult struct {
 }
 
 // OrderInfo is a subset of order data returned by order-svc internal API.
+//
+// Amount is order-svc's word on what the order costs — derived from
+// products.price, never from the client. ProcessPayment charges this value
+// and this value alone; nothing the caller sends can move it.
 type OrderInfo struct {
-	ID     int    `json:"id"`
-	Status string `json:"status"`
+	ID     int     `json:"id"`
+	Status string  `json:"status"`
+	Amount float64 `json:"amount"`
 }

@@ -51,6 +51,28 @@ obs_get() {
   printf '%s' "$out"
 }
 
+# notification's HTTPRoute is gone from the gateway (that is what closes
+# /notification/chaos to the internet), so /notify-failed below can no longer
+# be reached through $BASE. Same open/wait/curl/kill shape as obs_get, but
+# against $API_NS and returning a status code — notification's distroless
+# image has no shell to `kubectl exec` a curl into, so a port-forward from the
+# host is the only way left in.
+notification_status() {
+  local method="$1" path="$2" data="${3:-}" out=""
+  kubectl -n "$API_NS" port-forward svc/notification 18099:80 >/dev/null 2>&1 &
+  local pf=$!
+  for _ in $(seq 1 20); do
+    curl -sS --max-time 2 -o /dev/null "http://localhost:18099/healthz" 2>/dev/null && break
+    sleep 0.5
+  done
+  local args=(-sS -o /dev/null -w '%{http_code}' --max-time 15 -X "$method")
+  [ -n "$data" ] && args+=(-H 'Content-Type: application/json' -d "$data")
+  out=$(curl "${args[@]}" "http://localhost:18099$path" 2>/dev/null)
+  kill "$pf" 2>/dev/null
+  wait "$pf" 2>/dev/null
+  printf '%s' "$out"
+}
+
 section "the stack is up"
 
 # The charts disagree about workload kind: loki and tempo are StatefulSets,
@@ -112,9 +134,11 @@ fi
 # A failing notification is telemetry too: /notify-failed logs a five-line
 # error burst, and the Loki check below proves the pipeline carries failures,
 # not only the happy path. Real ids, not zeros — the handler rejects id 0
-# with a 400.
-fail_code=$(status POST /notification/notify-failed \
-  "{\"order_id\":$order_id,\"payment_id\":${payment_id:-1},\"amount\":$AMOUNT,\"user_id\":1}" "$token")
+# with a 400. In-cluster via notification_status — notification has no route
+# on the gateway to reach this through $BASE any more, and the handler takes
+# no token in the first place, so none is passed.
+fail_code=$(notification_status POST /notify-failed \
+  "{\"order_id\":$order_id,\"payment_id\":${payment_id:-1},\"amount\":$AMOUNT,\"user_id\":1}")
 if [ "$fail_code" = "500" ]; then
   ok "notify-failed answered 500 — a failure is now flowing through the pipeline"
 else
@@ -144,14 +168,14 @@ print(' '.join(sorted(out)))" 2>/dev/null)
 # propagates the same way (otelhttp both ends) — a regression in either hop
 # shows up here as a missing service.
 missing=""
-for svc in platform-local-payment-svc platform-local-order-svc platform-local-payment-gateway platform-local-notification; do
+for svc in platform-local-payment-svc platform-local-order-svc platform-local-payment platform-local-notification; do
   case " $services " in
     *" $svc "*) : ;;
     *) missing="$missing ${svc#platform-local-}" ;;
   esac
 done
 if [ -z "$missing" ]; then
-  ok "one trace spans payment-svc, order-svc, payment-gateway and notification"
+  ok "one trace spans payment-svc, order-svc, payment and notification"
 else
   bad "trace is missing:$missing — context is not propagating"
   note "saw: ${services:-nothing}"

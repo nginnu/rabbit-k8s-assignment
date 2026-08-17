@@ -50,7 +50,7 @@ services:
       # The other half of the order-svc cycle: order-svc starts a payment, this
       # service calls back to settle it.
       ingress: [gateway, svc:order-svc]
-      # No redis: this service opens MariaDB only. auth-svc and order-svc are
+      # No redis: this service opens MariaDB only. auth and order-svc are
       # the two that call db.OpenRedis.
       # svc:notification is easy to forget: the settle path now ends with a
       # best-effort notify, so without the rule the call is dropped and payment

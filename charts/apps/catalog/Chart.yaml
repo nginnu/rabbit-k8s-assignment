@@ -1,5 +1,5 @@
 apiVersion: v2
-name: catalog-svc
+name: catalog
 description: |
   Catalog service — the product list, split out of order-svc so the browse
   path and the order path scale and fail independently. Read-only against

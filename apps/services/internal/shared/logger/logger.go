@@ -24,7 +24,7 @@ var baggageFieldMap = map[string]string{
 }
 
 // Init installs the default slog logger. serviceShortName becomes the logger
-// name, for example "auth-svc".
+// name, for example "auth".
 func Init(serviceShortName string) *slog.Logger {
 	// Stdout JSON, readable locally and scrapeable from the container log.
 	stdoutHandler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{

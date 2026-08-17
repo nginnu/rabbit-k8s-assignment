@@ -15,7 +15,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// OrderHandler exposes order endpoints. GET /products moved to catalog-svc
+// OrderHandler exposes order endpoints. GET /products moved to catalog
 // with the split; the route in front of this service now only carries orders.
 type OrderHandler struct {
 	uc *usecase.OrderUsecase
@@ -46,7 +46,7 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 		"product_id", req.ProductID,
 	)
 
-	order, err := h.uc.CreateOrder(ctx, claims.UserID, req)
+	order, amount, err := h.uc.CreateOrder(ctx, claims.UserID, req)
 	if err != nil {
 		slog.ErrorContext(ctx, "create order failed",
 			"user_id", claims.UserID,
@@ -65,6 +65,7 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 		"id":         order.ID,
 		"product_id": order.ProductID,
 		"status":     order.Status,
+		"amount":     amount,
 	})
 }
 
@@ -107,7 +108,7 @@ func (h *OrderHandler) GetOrderInternal(c *gin.Context) {
 	}
 
 	ctx := c.Request.Context()
-	o, err := h.uc.GetOrder(ctx, id)
+	o, amount, err := h.uc.GetOrder(ctx, id)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "order not found"})
@@ -126,6 +127,7 @@ func (h *OrderHandler) GetOrderInternal(c *gin.Context) {
 		"user_id":    o.UserID,
 		"product_id": o.ProductID,
 		"status":     o.Status,
+		"amount":     amount,
 	})
 }
 

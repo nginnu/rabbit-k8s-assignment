@@ -76,6 +76,21 @@ func TestChargeSendsAmountAsJSON(t *testing.T) {
 	}
 }
 
+// gatewayClientTimeout is deliberately generous — sized to outlast the pay
+// page's own configurable chaos latency (up to 10s) rather than to enforce a
+// tight SLA — so a wall-clock proof like TestValidateTimesOutOnHungServer in
+// order_test.go would cost 15s+ of suite time for very little extra
+// confidence: the enforcement mechanism (http.Client.Timeout) is already
+// proven behaviorally there and in notification_test.go. What is specific to
+// this constructor, and worth asserting directly, is that the constant is
+// actually the one wired into the client.
+func TestNewPaymentGatewayClientSetsBoundedTimeout(t *testing.T) {
+	c := NewPaymentGatewayClient("http://example.invalid")
+	if c.client.Timeout != gatewayClientTimeout {
+		t.Errorf("client timeout = %v, want %v", c.client.Timeout, gatewayClientTimeout)
+	}
+}
+
 func TestChargeDeclinedSurfacesCodeAndBody(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)

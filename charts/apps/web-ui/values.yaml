@@ -50,6 +50,6 @@ services:
       # No backend egress: lib/api.ts runs in the browser, so the calls to
       # auth/order/payment leave the user's machine, not this pod. Option 1
       # moves them server-side, and from web those become cross-namespace calls
-      # into api — svc:auth-svc would render a podSelector scoped to web and
+      # into api — svc:auth would render a podSelector scoped to web and
       # match nothing, so that change needs a new peer in the catalogue.
       egress: [alloy]

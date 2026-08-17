@@ -78,6 +78,10 @@ type fakeOrder struct {
 	log         *callLog
 	validateErr error
 	markPaidErr error
+	// amount is what order-svc says this order costs — the only source
+	// ProcessPayment reads a price from, since ProcessPaymentInput carries
+	// none.
+	amount float64
 }
 
 func (f *fakeOrder) Validate(_ context.Context, _ int) (*domain.OrderInfo, error) {
@@ -85,7 +89,7 @@ func (f *fakeOrder) Validate(_ context.Context, _ int) (*domain.OrderInfo, error
 	if f.validateErr != nil {
 		return nil, f.validateErr
 	}
-	return &domain.OrderInfo{ID: 7, Status: "pending"}, nil
+	return &domain.OrderInfo{ID: 7, Status: "pending", Amount: f.amount}, nil
 }
 
 func (f *fakeOrder) MarkPaid(_ context.Context, _ int) error {
@@ -97,10 +101,14 @@ type fakeCharge struct {
 	log    *callLog
 	err    error
 	result *domain.ChargeResult
+	// gotAmount records what ProcessPayment actually sent to Charge, so a
+	// test can assert it traces back to the order, not the caller.
+	gotAmount float64
 }
 
-func (f *fakeCharge) Charge(_ context.Context, _ float64, _ gateway.ChaosHeaders) (*domain.ChargeResult, error) {
+func (f *fakeCharge) Charge(_ context.Context, amount float64, _ gateway.ChaosHeaders) (*domain.ChargeResult, error) {
 	f.log.call("gateway.charge")
+	f.gotAmount = amount
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -117,22 +125,25 @@ type fakeNotify struct {
 	// wrong ids is worse than none: the checkout proof greps by order_id.
 	lastPaymentID int
 	lastOrderID   int
+	lastAmount    float64
 }
 
-func (f *fakeNotify) Notify(_ context.Context, paymentID, orderID int, _ float64, _ int) error {
+func (f *fakeNotify) Notify(_ context.Context, paymentID, orderID int, amount float64, _ int) error {
 	f.log.call("notify.send")
-	f.lastPaymentID, f.lastOrderID = paymentID, orderID
+	f.lastPaymentID, f.lastOrderID, f.lastAmount = paymentID, orderID, amount
 	return f.err
 }
 
-// newUsecase wires the four fakes around one call log.
+// newUsecase wires the four fakes around one call log. fakeOrder defaults to
+// answering 3290 for order 7's price, the same fixture used throughout this
+// file — ProcessPaymentInput has nothing to override it with.
 func newUsecase() (PaymentRepository, OrderGateway, ChargeGateway, Notifier, *callLog) {
 	log := &callLog{}
-	return &fakeRepo{log: log}, &fakeOrder{log: log}, &fakeCharge{log: log}, &fakeNotify{log: log}, log
+	return &fakeRepo{log: log}, &fakeOrder{log: log, amount: 3290}, &fakeCharge{log: log}, &fakeNotify{log: log}, log
 }
 
 func input() ProcessPaymentInput {
-	return ProcessPaymentInput{OrderID: 7, Amount: 3290, UserID: 1}
+	return ProcessPaymentInput{OrderID: 7, UserID: 1}
 }
 
 func TestMain(m *testing.M) {
@@ -183,6 +194,41 @@ func TestProcessPaymentHappyPath(t *testing.T) {
 	fn := notify.(*fakeNotify)
 	if fn.lastOrderID != 7 || fn.lastPaymentID != 42 {
 		t.Errorf("notify payload ids = (%d,%d), want (42,7)", fn.lastPaymentID, fn.lastOrderID)
+	}
+}
+
+// This is the headline fix under test. ProcessPaymentInput carries no Amount
+// field at all — there is structurally nothing for a caller to override —
+// so the only way CreatePending and Charge can see a price is through
+// order.Validate. Changing what the fake order-svc answers with, and nothing
+// else, must change what gets charged.
+func TestProcessPaymentChargesOrderDerivedAmountNotClientInput(t *testing.T) {
+	repo, order, charge, notify, _ := newUsecase()
+	order.(*fakeOrder).amount = 4500 // order-svc's answer for this order
+	uc := New(repo, order, charge, notify)
+
+	out, err := uc.ProcessPayment(context.Background(), input())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out.Status != domain.StatusPaid {
+		t.Fatalf("status = %q, want paid", out.Status)
+	}
+
+	fc := charge.(*fakeCharge)
+	if fc.gotAmount != 4500 {
+		t.Errorf("charged amount = %v, want 4500 from order-svc", fc.gotAmount)
+	}
+	fr := repo.(*fakeRepo)
+	if len(fr.statusUpdates) != 1 {
+		t.Fatalf("status updates = %+v, want exactly one", fr.statusUpdates)
+	}
+	fn := notify.(*fakeNotify)
+	if !fn.log.has("notify.send") {
+		t.Fatalf("notify never ran")
+	}
+	if fn.lastAmount != 4500 {
+		t.Errorf("notify amount = %v, want 4500 — the announced amount must match what was actually charged", fn.lastAmount)
 	}
 }
 

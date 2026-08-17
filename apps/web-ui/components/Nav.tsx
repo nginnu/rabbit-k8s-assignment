@@ -12,17 +12,15 @@ export default function Nav() {
 
   // Re-check the token on every route change, so a login or logout redirect
   // updates the nav.
-  // + listen storage event (cross-tab)
+  //
+  // No `storage` event listener here: the session lives in sessionStorage
+  // (clearToken/setToken in lib/api.ts), and the storage event only fires
+  // for localStorage, and only in *other* tabs — sessionStorage is per-tab
+  // to begin with, so there is no cross-tab state to react to. A listener
+  // for it is dead code that looks like cross-tab sync but never runs.
   useEffect(() => {
     setLoggedIn(!!getToken());
     setUsername(getUsername());
-
-    const onStorage = () => {
-      setLoggedIn(!!getToken());
-      setUsername(getUsername());
-    };
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
   }, [pathname]);
 
   const handleLogout = () => {

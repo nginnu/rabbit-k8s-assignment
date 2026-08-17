@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/nginnu/rabbit-k8s-assignment/apps/services/internal/payment/domain"
 )
@@ -16,8 +17,9 @@ import (
 // test chooses, so Validate/MarkPaid are asserted against what left the
 // client, not just what came back.
 type fakeOrderSvc struct {
-	respStatus string // order status to answer Validate with, "" = 404
-	respCode   int    // HTTP status to answer with
+	respStatus string  // order status to answer Validate with, "" = 404
+	respAmount float64 // order-svc's answer for products.price joined on the order
+	respCode   int     // HTTP status to answer with
 	method     string
 	path       string
 	body       string
@@ -37,12 +39,12 @@ func (f *fakeOrderSvc) handler() http.Handler {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(domain.OrderInfo{ID: 7, Status: f.respStatus})
+		_ = json.NewEncoder(w).Encode(domain.OrderInfo{ID: 7, Status: f.respStatus, Amount: f.respAmount})
 	})
 }
 
 func TestValidateAcceptsPendingOrder(t *testing.T) {
-	svc := &fakeOrderSvc{respStatus: "pending"}
+	svc := &fakeOrderSvc{respStatus: "pending", respAmount: 3290}
 	ts := httptest.NewServer(svc.handler())
 	defer ts.Close()
 
@@ -52,6 +54,11 @@ func TestValidateAcceptsPendingOrder(t *testing.T) {
 	}
 	if info.Status != "pending" || info.ID != 7 {
 		t.Errorf("info = %+v, want order 7 pending", info)
+	}
+	// This is what payment-svc's ProcessPayment charges — a decode that drops
+	// or zeroes it would settle every order for free.
+	if info.Amount != 3290 {
+		t.Errorf("info.Amount = %v, want 3290 decoded from order-svc's response", info.Amount)
 	}
 	if svc.method != http.MethodGet || svc.path != "/internal/orders/7" {
 		t.Errorf("request = %s %s, want GET /internal/orders/7", svc.method, svc.path)
@@ -117,5 +124,31 @@ func TestMarkPaidSurfacesNon200(t *testing.T) {
 	err := NewOrderClient(ts.URL).MarkPaid(context.Background(), 7)
 	if err == nil || !strings.Contains(err.Error(), "409") {
 		t.Errorf("error = %v, want PATCH failure surfaced with the code", err)
+	}
+}
+
+// order.go forwards no chaos headers — order-svc has no legitimate reason to
+// run long — so orderClientTimeout exists purely to bound a genuinely hung
+// dependency. Before this timeout existed, a stuck order-svc held the
+// checkout request open with no upper bound at all.
+func TestValidateTimesOutOnHungServer(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(orderClientTimeout + 2*time.Second)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	start := time.Now()
+	_, err := NewOrderClient(ts.URL).Validate(context.Background(), 7)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("Validate returned nil against a hung server, want timeout error")
+	}
+	if elapsed < orderClientTimeout-500*time.Millisecond {
+		t.Errorf("Validate failed after %v, too fast to be the %v timeout; err: %v", elapsed, orderClientTimeout, err)
+	}
+	if elapsed > orderClientTimeout+1500*time.Millisecond {
+		t.Errorf("Validate took %v, the %v timeout did not cut the request; err: %v", elapsed, orderClientTimeout, err)
 	}
 }

@@ -76,8 +76,8 @@ alloy:
         }
       }
 
-      // service.name arrives as platform-local-auth-svc. Split it into
-      // deployment_environment=local and service=auth-svc, which is what every
+      // service.name arrives as platform-local-auth. Split it into
+      // deployment_environment=local and service=auth, which is what every
       // dashboard and the Tempo-to-Loki link query by.
       //
       // The services deliberately do not send deployment.environment themselves

@@ -45,9 +45,12 @@ function PayForm() {
     setLoading(true);
 
     try {
+      // amount is deliberately not sent — the server prices the order from
+      // what it already knows (products.price via the order), never from a
+      // number the browser hands it. The "amount" state here is purely the
+      // figure this page displays back to the shopper before they submit.
       const res = await createPayment(
         Number(orderId),
-        Number(amount),
         Number(errorRate),
         Number(latencyMs)
       );
@@ -81,24 +84,32 @@ function PayForm() {
             Your order is held until payment confirms.
           </p>
 
-          {productName ? (
+          {orderId ? (
             <div className="mt-5 rounded-xl border border-white/60 bg-white/60 backdrop-blur p-4">
               <div className="text-xs text-slate-500">Order #{orderId}</div>
-              <div className="mt-1 font-semibold text-slate-800">
-                {productName}
-              </div>
+              {productName && (
+                <div className="mt-1 font-semibold text-slate-800">
+                  {productName}
+                </div>
+              )}
               <div className="mt-3 flex items-baseline justify-between">
                 <span className="text-xs uppercase tracking-wider text-slate-500">
                   Total
                 </span>
-                <span className="text-2xl font-bold text-sky-700">
-                  ฿{Number(amount).toLocaleString()}
-                </span>
+                {amount ? (
+                  <span className="text-2xl font-bold text-sky-700">
+                    ฿{Number(amount).toLocaleString()}
+                  </span>
+                ) : (
+                  <span className="text-xs text-slate-500">
+                    Priced by the server on submit
+                  </span>
+                )}
               </div>
             </div>
           ) : (
             <p className="mt-5 text-xs text-slate-500">
-              No order selected — fill in the details on the right.
+              No order selected — enter an order ID on the right.
             </p>
           )}
         </div>
@@ -114,35 +125,22 @@ function PayForm() {
       {/* Form */}
       <div className="md:col-span-3">
         <form onSubmit={handleSubmit} className="glass p-6 space-y-4">
+          {/* Amount is never entered here — the server derives it from the
+              order, so there is nothing for this field to submit. Only the
+              order ID is ever manual input. */}
           {!productName && (
-            <div className="grid sm:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1.5">
-                  Order ID
-                </label>
-                <input
-                  type="number"
-                  value={orderId}
-                  onChange={(e) => setOrderId(e.target.value)}
-                  required
-                  min={1}
-                  className="input"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1.5">
-                  Amount (THB)
-                </label>
-                <input
-                  type="number"
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                  required
-                  min={0}
-                  step="0.01"
-                  className="input"
-                />
-              </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1.5">
+                Order ID
+              </label>
+              <input
+                type="number"
+                value={orderId}
+                onChange={(e) => setOrderId(e.target.value)}
+                required
+                min={1}
+                className="input"
+              />
             </div>
           )}
 

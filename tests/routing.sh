@@ -22,10 +22,20 @@ section "each path reaches its own service"
 # 401 rather than 200: these need a token. It is still the right answer, and it
 # proves the request reached the service instead of stopping at the gateway —
 # a missing route gives 404 from Traefik, not 401 from the app.
-expect "/api/products          " 401 "$(status GET /api/products)"
+#
+# /api/products is the exception: it takes no token any more, so 401-vs-404
+# cannot tell "reached catalog" from "no route matched" here. 200 with a
+# JSON array is that proof instead — the check right below, and
+# route-isolation.sh's x-envoy-decorator-operation check, confirm catalog
+# specifically answered rather than some other 200.
+expect "/api/products          " 200 "$(status GET /api/products)"
 expect "/api/orders            " 401 "$(status GET /api/orders)"
 expect "/api/payments          " 401 "$(status POST /api/payments '{}')"
-expect "/notification          " 200 "$(status GET /notification)"
+# notification's route was removed from the gateway on purpose — that is what
+# closes /notification/chaos to the internet. 404 here is the proof the edge
+# no longer has any route for this prefix; the endpoint itself is still
+# checked in-cluster by checkout.sh and o11y-stack.sh.
+expect "/notification          " 404 "$(status GET /notification)"
 
 # auth/login is the one API path that takes no token, so it answers properly
 # without one and shows the rewrite landed on the right handler.

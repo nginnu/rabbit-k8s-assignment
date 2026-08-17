@@ -6,15 +6,16 @@
 // page, which would collide with order-svc's /orders API on the same origin.
 // The gateway strips /api before forwarding, so backend paths are untouched:
 //
-//   /api/auth/login  → auth-svc     /auth/login
-//   /api/products    → order-svc    /products
+//   /api/auth/login  → auth         /auth/login
+//   /api/products    → catalog      /products   (public, no Authorization)
 //   /api/orders      → order-svc    /orders
 //   /api/payments    → payment-svc  /payments
+//
+// One constant, not one per backend: the browser only ever sees this single
+// same-origin prefix — which service answers behind the gateway is a routing
+// decision, not something the frontend distinguishes between call sites. A
+// name like ORDER_URL used to build the catalog URL lied about that.
 const API_BASE = "/api";
-
-const AUTH_URL = API_BASE;
-const ORDER_URL = API_BASE;
-const PAYMENT_URL = API_BASE;
 
 // ── JWT + session helpers ────────────────────────────────────
 export function getToken(): string | null {
@@ -125,7 +126,7 @@ export async function login(username: string, password: string) {
     session_id?: string;
     expires_at?: string;
     error?: string;
-  }>(`${AUTH_URL}/auth/login`, {
+  }>(`${API_BASE}/auth/login`, {
     method: "POST",
     body: JSON.stringify({ username, password }),
   });
@@ -140,24 +141,33 @@ export interface Product {
 }
 
 export async function listProducts() {
-  return apiFetch<Product[] | { error?: string }>(`${ORDER_URL}/products`);
+  return apiFetch<Product[] | { error?: string }>(`${API_BASE}/products`);
 }
 
 // ── Orders ───────────────────────────────────────────────────
+// user_id and created_at are marked optional, not required: the backend
+// (order/domain/domain.go) never sends either field today. Declaring them
+// required typed a lie — every read of order.user_id or order.created_at
+// was `undefined` at runtime while TypeScript insisted it couldn't be.
+//
+// amount is optional for the same reason in reverse: it is new and
+// additive, present on the create-order 201, but not necessarily on every
+// row from GET /orders (the list endpoint's shape didn't change).
 export interface Order {
   id: number;
-  user_id: number;
+  user_id?: number;
   product_id: string;
   status: string;
-  created_at: string;
+  created_at?: string;
+  amount?: number;
 }
 
 export async function listOrders() {
-  return apiFetch<Order[] | { error?: string }>(`${ORDER_URL}/orders`);
+  return apiFetch<Order[] | { error?: string }>(`${API_BASE}/orders`);
 }
 
 export async function createOrder(productId: string) {
-  return apiFetch<Order | { error?: string }>(`${ORDER_URL}/orders`, {
+  return apiFetch<Order | { error?: string }>(`${API_BASE}/orders`, {
     method: "POST",
     body: JSON.stringify({ product_id: productId }),
   });
@@ -171,9 +181,12 @@ export interface PaymentResult {
   error?: string;
 }
 
+// amount is not a parameter: the server derives it from the order (joined on
+// products.price) and charges that, never a client-supplied figure. Sending
+// one here — even a correct one — would keep the door open for the next
+// caller to send an incorrect one instead.
 export async function createPayment(
   orderId: number,
-  amount: number,
   chaosErrorRate?: number,
   chaosLatencyMs?: number
 ) {
@@ -185,9 +198,9 @@ export async function createPayment(
     headers["X-Chaos-Latency-Ms"] = String(chaosLatencyMs);
   }
 
-  return apiFetch<PaymentResult>(`${PAYMENT_URL}/payments`, {
+  return apiFetch<PaymentResult>(`${API_BASE}/payments`, {
     method: "POST",
-    body: JSON.stringify({ order_id: orderId, amount }),
+    body: JSON.stringify({ order_id: orderId }),
     headers,
   });
 }

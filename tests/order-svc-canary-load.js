@@ -132,7 +132,7 @@ export function setup() {
 
 export default function (data) {
   // GET /api/orders, not /api/products: the AnalysisTemplate measures
-  // service="order-svc", and the product list moved to catalog-svc with the
+  // service="order-svc", and the product list moved to catalog with the
   // split — pointing this generator at the catalog would leave the canary
   // measuring no traffic at all, which the query scores as NaN and fails by
   // design. Listing the user's own orders is the cheapest authed read

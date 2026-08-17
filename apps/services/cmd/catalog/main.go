@@ -1,4 +1,4 @@
-// Package main — catalog-svc entry point: the product list, split out of
+// Package main — catalog entry point: the product list, split out of
 // order-svc so the read path (browse) and the write path (order, settle) scale
 // and fail independently. Listens on APP_PORT (default 9004), graceful
 // shutdown on SIGINT/SIGTERM.
@@ -28,12 +28,12 @@ import (
 )
 
 // serviceShortName must match the Deployment name in
-// charts/apps/catalog-svc/values.yaml — it feeds cfg.ServiceName(), which
+// charts/apps/catalog/values.yaml — it feeds cfg.ServiceName(), which
 // becomes the OTel service.name resource attribute and, after
 // resource_to_telemetry_conversion in Alloy, the service_name label that SLO
 // alert queries match on. A mismatch here makes those queries return zero
 // series with no error.
-const serviceShortName = "catalog-svc"
+const serviceShortName = "catalog"
 
 func main() {
 	ctx := context.Background()
@@ -90,9 +90,12 @@ func main() {
 	r.Use(middleware.BaggageToSpan()) // copy baggage (from upstream service) → span attr
 	r.Use(middleware.RequestLogger())
 
-	// Public routes (JWT required)
+	// GET /products carries no auth: the catalog is the storefront's landing
+	// page, browsed before a visitor has signed in. JWT_SECRET stays a
+	// required env below — config.LoadBase panics without it even though no
+	// route reads it anymore, because the rest of the shared config depends
+	// on the same LoadBase call succeeding.
 	public := r.Group("/")
-	public.Use(middleware.Auth(cfg))
 	{
 		public.GET("/products", h.ListProducts)
 	}

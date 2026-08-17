@@ -121,9 +121,14 @@ func Auth(cfg config.Base) gin.HandlerFunc {
 			return
 		}
 		claims := &JWTClaims{}
+		// WithValidMethods pins parsing to HS256: without it, a token whose
+		// header claims "alg":"none" (or any other method) still reaches the
+		// keyfunc, which returns the same HMAC secret regardless — the classic
+		// jwt alg-confusion hole, closed here rather than trusted to every
+		// caller minting a token to always pick HS256 on its own.
 		token, err := jwt.ParseWithClaims(raw, claims, func(t *jwt.Token) (interface{}, error) {
 			return []byte(cfg.JWTSecret), nil
-		})
+		}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Name}))
 		if err != nil || !token.Valid {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "invalid token"})
 			return

@@ -26,10 +26,10 @@ services:
       limits:   { cpu: 500m, memory: 384Mi }
     env:
       - { name: APP_PORT, value: "9002" }
-      # In-cluster address, not through the gateway: this is east-west traffic
-      # and routing it out to the edge and back would add a hop and hide the
-      # dependency from the mesh.
-      - { name: PAYMENT_SVC_URL, value: http://payment-svc.api.svc.cluster.local }
+      # No PAYMENT_SVC_URL: order-svc opens no outbound HTTP at all — payment-svc
+      # calls it, not the other way round. Left set, it read as a live dependency
+      # and the next person to trace the call graph would look for a caller that
+      # does not exist.
       # Fraction of business requests answered with 500. 0 is off; raise it to
       # deploy a build that passes /healthz but serves errors, which is what a
       # canary has to catch and a crashing pod does not.
@@ -53,8 +53,11 @@ services:
       # the callback is dropped at whichever side is missing.
       ingress: [gateway, svc:payment-svc]
       # No redis since the catalog split: the product cache-aside that used
-      # it moved to catalog-svc, and nothing else here caches.
-      egress: [svc:payment-svc, mariadb, alloy]
+      # it moved to catalog, and nothing else here caches. No payment-svc
+      # either — the cycle above is one-way at the connection level, and a
+      # NetworkPolicy is connection-tracked, so payment-svc's replies come back
+      # on the ingress rule and need no egress of their own.
+      egress: [mariadb, alloy]
 
     rollout:
       strategy:

@@ -1,5 +1,5 @@
 apiVersion: v2
-name: payment-gateway
+name: payment
 description: |
   Stands in for an external payment gateway. Not a production service —
   the platform treats it as a third party: replaced, never canaried.

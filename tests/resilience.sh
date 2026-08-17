@@ -52,9 +52,14 @@ expect "the volume is still bound" Bound "$pvc"
 section "the services reconnect"
 # gorm holds a pool of connections that were all just cut. A service that does
 # not reconnect returns 500 here while looking healthy in kubectl.
+#
+# /api/orders, not /api/products: the catalog split (50c6c0b) moved
+# /api/products to catalog, and /api/products is public besides — a check
+# against it would still pass while proving nothing about order-svc's own
+# reconnect, which is what the label below claims.
 recovered=""
 for _ in $(seq 1 30); do
-  if [ "$(status GET /api/products '' "$token")" = "200" ]; then
+  if [ "$(status GET /api/orders '' "$token")" = "200" ]; then
     recovered=yes
     break
   fi
@@ -81,9 +86,14 @@ kubectl -n "$API_NS" delete pod "$victim" --wait=false >/dev/null 2>&1
 note "deleted $victim"
 
 # Ask immediately and repeatedly: the other replica should answer throughout.
+# /api/orders, same reason as above: the deleted pod is order-svc, so the
+# check has to hit a path order-svc actually serves. /api/products would
+# never notice this pod was gone at all — catalog's replicas are
+# untouched by the delete above, so that check would read "no failed
+# requests" even if order-svc took the full 10 seconds to come back.
 failures=0
 for _ in $(seq 1 10); do
-  [ "$(status GET /api/products '' "$token")" = "200" ] || failures=$((failures + 1))
+  [ "$(status GET /api/orders '' "$token")" = "200" ] || failures=$((failures + 1))
   sleep 1
 done
 

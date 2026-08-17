@@ -25,9 +25,13 @@ func New(uc *usecase.PaymentUsecase) *PaymentHandler {
 }
 
 // createPaymentRequest is the JSON body for POST /payments.
+//
+// No Amount field: the price is order-svc's word, read via
+// PaymentUsecase.ProcessPayment → OrderGateway.Validate, never the client's.
+// A body that still sends "amount" is accepted and ignored — encoding/json
+// drops unknown-to-the-struct fields rather than erroring on them.
 type createPaymentRequest struct {
-	OrderID int     `json:"order_id" binding:"required"`
-	Amount  float64 `json:"amount"   binding:"required,gt=0"`
+	OrderID int `json:"order_id" binding:"required"`
 }
 
 // CreatePayment handles POST /payments.
@@ -53,7 +57,6 @@ func (h *PaymentHandler) CreatePayment(c *gin.Context) {
 
 	out, err := h.uc.ProcessPayment(c.Request.Context(), usecase.ProcessPaymentInput{
 		OrderID: req.OrderID,
-		Amount:  req.Amount,
 		UserID:  claims.UserID,
 		Chaos:   chaos,
 	})

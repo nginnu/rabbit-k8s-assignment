@@ -55,7 +55,7 @@ func main() {
 	}
 
 	// No Redis since the catalog split: the product cache-aside that used it
-	// moved to catalog-svc, and nothing else in the order lifecycle caches.
+	// moved to catalog, and nothing else in the order lifecycle caches.
 	repo := repository.New(gormDB)
 	uc := usecase.New(repo)
 	h := handler.New(uc)
@@ -70,16 +70,22 @@ func main() {
 
 	// Business routes: full observability stack
 	r.Use(middleware.OTel(cfg.ServiceName(serviceShortName)))
-	// FailInjector must come after OTel: otelgin records status from
-	// c.Writer.Status() once c.Next() returns, so a 500 written here still
-	// lands in http_server_request_duration_seconds_count with that code.
-	r.Use(middleware.FailInjector(cfg.FailRate))
 	r.Use(middleware.TraceResponseHeader())
 	r.Use(middleware.BaggageToSpan()) // copy baggage (from upstream service) → span attr
 	r.Use(middleware.RequestLogger())
 
 	// Public routes (JWT required)
 	public := r.Group("/")
+	// FailInjector is scoped to this group, not r.Use() at the root: the
+	// canary demo it exists for proves a rollback on the customer-facing
+	// path, and registering it globally also faults /internal/*, which
+	// payment-svc calls mid-checkout. A canary running with FAIL_RATE>0 would
+	// then break payment settlement and read as a payment bug, not the
+	// order-svc rollout it is meant to catch.
+	// It still comes after OTel: otelgin records status from c.Writer.Status()
+	// once c.Next() returns, so a 500 written here still lands in
+	// http_server_request_duration_seconds_count with that code.
+	public.Use(middleware.FailInjector(cfg.FailRate))
 	public.Use(middleware.Auth(cfg))
 	{
 		public.POST("/orders", h.CreateOrder)

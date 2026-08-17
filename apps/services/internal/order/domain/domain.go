@@ -1,5 +1,5 @@
 // Package domain defines the core entities and interfaces for the order bounded context.
-// The product list moved to catalog-svc with the split; Product stays because
+// The product list moved to catalog with the split; Product stays because
 // order creation still checks the product exists before inserting.
 package domain
 
@@ -54,13 +54,18 @@ type OrderResponse struct {
 }
 
 // UpdateStatusRequest is the body for PATCH /internal/orders/:id.
+//
+// oneof pins the value to the three the ENUM column accepts. Without it, any
+// string clears binding and reaches gorm, which turns a bad caller input into
+// a 500 instead of a 400 — the ENUM rejects it, but at the DB, past the point
+// a client error should have been caught.
 type UpdateStatusRequest struct {
-	Status OrderStatus `json:"status" binding:"required"`
+	Status OrderStatus `json:"status" binding:"required,oneof=pending paid cancelled"`
 }
 
 // OrderRepository abstracts order + product persistence. The gorm
 // implementation is internal/order/repository. Listing products is not here:
-// that read path belongs to catalog-svc since the split — this context only
+// that read path belongs to catalog since the split — this context only
 // touches products to validate an order's product_id.
 type OrderRepository interface {
 	CheckProductAvailability(ctx context.Context, productID string) (*Product, error)
