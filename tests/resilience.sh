@@ -55,7 +55,7 @@ section "the services reconnect"
 #
 # /api/orders, not /api/products: the catalog split (50c6c0b) moved
 # /api/products to catalog, and /api/products is public besides — a check
-# against it would still pass while proving nothing about order-svc's own
+# against it would still pass while proving nothing about order's own
 # reconnect, which is what the label below claims.
 recovered=""
 for _ in $(seq 1 30); do
@@ -67,18 +67,18 @@ for _ in $(seq 1 30); do
 done
 
 if [ -n "$recovered" ]; then
-  ok "order-svc is serving again"
+  ok "order is serving again"
 else
-  bad "order-svc did not recover — the connection pool did not reconnect"
+  bad "order did not recover — the connection pool did not reconnect"
 fi
 
 section "a stateless replica is deleted"
 # Two replicas and a PDB, so one going away should not be visible from outside.
-victim=$(kubectl -n "$API_NS" get pods -l app.kubernetes.io/name=order-svc \
+victim=$(kubectl -n "$API_NS" get pods -l app.kubernetes.io/name=order \
   -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
 
 if [ -z "$victim" ]; then
-  bad "no order-svc pod found"
+  bad "no order pod found"
   summary
 fi
 
@@ -86,11 +86,11 @@ kubectl -n "$API_NS" delete pod "$victim" --wait=false >/dev/null 2>&1
 note "deleted $victim"
 
 # Ask immediately and repeatedly: the other replica should answer throughout.
-# /api/orders, same reason as above: the deleted pod is order-svc, so the
-# check has to hit a path order-svc actually serves. /api/products would
+# /api/orders, same reason as above: the deleted pod is order, so the
+# check has to hit a path order actually serves. /api/products would
 # never notice this pod was gone at all — catalog's replicas are
 # untouched by the delete above, so that check would read "no failed
-# requests" even if order-svc took the full 10 seconds to come back.
+# requests" even if order took the full 10 seconds to come back.
 failures=0
 for _ in $(seq 1 10); do
   [ "$(status GET /api/orders '' "$token")" = "200" ] || failures=$((failures + 1))
@@ -103,7 +103,7 @@ else
   bad "$failures of 10 requests failed during the replacement"
 fi
 
-# Pods, not the controller: order-svc is an Argo Rollout, the others are still
+# Pods, not the controller: order is an Argo Rollout, the others are still
 # Deployments, and both write the same app.kubernetes.io/name label from the
 # shared chart template. Counting Ready pods works for either kind without a
 # branch, and does not break the next time a service changes kind — `kubectl
@@ -112,7 +112,7 @@ fi
 # does not otherwise take on.
 replicas=0
 for _ in $(seq 1 60); do
-  replicas=$(kubectl -n "$API_NS" get pods -l app.kubernetes.io/name=order-svc \
+  replicas=$(kubectl -n "$API_NS" get pods -l app.kubernetes.io/name=order \
     -o jsonpath='{range .items[*]}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}' 2>/dev/null \
     | grep -c '^True')
   [ "$replicas" -eq 2 ] && break

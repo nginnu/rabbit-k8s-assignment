@@ -278,7 +278,7 @@ else
   bad "pods not ready:"$'\n'"$not_ready"
 fi
 
-# web-ui and notification/auth/catalog/order-svc/payment-svc/payment/platform-config
+# web-ui and notification/auth/catalog/order/payment/platform-config
 # split across two namespaces now, so this loops rather than reading one.
 mismatched=""
 for ns in $APP_NAMESPACES; do

@@ -1,7 +1,7 @@
 apiVersion: v2
 name: notification
 description: |
-  Notification service: payment-svc calls POST /notify here when a payment
+  Notification service: order calls POST /notify here when a payment
   settles. /notify-failed deliberately fails, so a failure can be simulated on
   demand and then seen in Loki; the /chaos endpoints are kept so a canary can
   still be told to fail on demand.

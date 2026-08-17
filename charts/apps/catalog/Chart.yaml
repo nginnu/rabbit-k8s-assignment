@@ -1,7 +1,7 @@
 apiVersion: v2
 name: catalog
 description: |
-  Catalog service — the product list, split out of order-svc so the browse
+  Catalog service — the product list, split out of order so the browse
   path and the order path scale and fail independently. Read-only against
   the seeded products table, cache-aside in front of it.
 

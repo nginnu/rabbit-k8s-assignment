@@ -1,6 +1,6 @@
 # notification
 #
-# Receives payment-svc's POST /notify when a payment settles, and lists what it
+# Receives order's POST /notify when a payment settles, and lists what it
 # received on GET /notifications. POST /notify-failed deliberately fails, so a
 # failure can be simulated on demand and then seen in Loki.
 #
@@ -12,7 +12,7 @@
 # caller or by a kubectl exec.
 
 # api, not a namespace of its own: notification is a backend workload that only
-# payment-svc calls, over ClusterIP, from this same namespace — a third
+# order calls, over ClusterIP, from this same namespace — a third
 # namespace would need its own copy of every cross-namespace allow rule to prove
 # the same thing.
 namespace: api
@@ -75,15 +75,15 @@ services:
 
     networkPolicy: true
     networkPolicyPeers:
-      # payment-svc must be here or its /notify call never arrives: the
-      # namespace is default-deny, and payment still succeeds without the
+      # order must be here or its /notify call never arrives: the
+      # namespace is default-deny, and the checkout still succeeds without the
       # notification — the call is best-effort, so a dropped packet fails
       # silently and nothing in the logs says the rule is missing.
       #
       # No gateway peer: the HTTPRoute is gone, so an allow from traefik would
       # open a path nothing routes — and the next reader would take it as
       # evidence that this service is meant to be reachable from the edge.
-      ingress: [svc:payment-svc]
+      ingress: [svc:order]
       # egress: [alloy] now carries the OTLP push, not just future-proofing: the
       # `alloy` peer in _networkpolicy.tpl opens TCP 4317, the OTLP/gRPC port.
       egress: [alloy]

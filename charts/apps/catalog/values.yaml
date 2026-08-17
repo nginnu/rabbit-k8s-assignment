@@ -1,6 +1,6 @@
 # catalog
 #
-# The product list. Split out of order-svc: browsing is the storefront's
+# The product list. Split out of order: browsing is the storefront's
 # hottest read and has nothing to do with the order lifecycle, so it gets its
 # own scaling and its own failures.
 

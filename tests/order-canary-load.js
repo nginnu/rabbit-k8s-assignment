@@ -1,15 +1,15 @@
-// Steady traffic against order-svc through the gateway, for the duration of a
-// canary analysis.
+// Steady traffic against order (payment-svc merged into it) through the
+// gateway, for the duration of a canary analysis.
 //
 // This is a load generator, not a pass/fail journey test: run it in the
-// background while an operator changes the order-svc pod template and the
+// background while an operator changes the order pod template and the
 // Rollout starts its canary. Without traffic in that window the
-// order-svc-success-rate AnalysisTemplate divides 0/0, gets NaN, and fails by
-// design (see charts/apps/order-svc/values.yaml) — proving the opposite of a
+// order-success-rate AnalysisTemplate divides 0/0, gets NaN, and fails by
+// design (see charts/apps/order/values.yaml) — proving the opposite of a
 // healthy release. This script exists so there is something for the analysis
 // query to measure.
 //
-//   BASE=https://localhost k6 run tests/order-svc-canary-load.js
+//   BASE=https://localhost k6 run tests/order-canary-load.js
 //
 // Same login flow, same test account, same gateway path as every other
 // suite — see tests/lib.sh (status/body helpers) and tests/auth.sh.
@@ -44,7 +44,7 @@ const SECRET = __ENV.SECRET || 'password';
 // (5 * 120), so one flaky request is 599/600 = 0.9983 — nowhere near the
 // line. That is a deliberate order of magnitude above the N>=20 floor: kind
 // on a laptop can move a few req/s against a 2-pod, resource-limited
-// service (order-svc requests 50m/96Mi) without the load itself becoming
+// service (order requests 50m/96Mi) without the load itself becoming
 // the thing under test.
 const RATE = 5; // requests per second, constant arrival rate
 
@@ -107,7 +107,7 @@ const LOGIN_BODY = JSON.stringify({ username: ACCOUNT, password: SECRET });
 const JSON_HEADERS = { headers: { 'Content-Type': 'application/json' } };
 
 // setup() runs once, not once per VU or iteration — every VU shares the one
-// token it returns. That's fine here: the analysis measures order-svc
+// token it returns. That's fine here: the analysis measures order's
 // response codes, not per-request auth freshness. Logging in inside the
 // default function instead would make every iteration pay for a second
 // request and would mix login traffic into the same metrics as the
@@ -132,11 +132,11 @@ export function setup() {
 
 export default function (data) {
   // GET /api/orders, not /api/products: the AnalysisTemplate measures
-  // service="order-svc", and the product list moved to catalog with the
+  // service="order", and the product list moved to catalog with the
   // split — pointing this generator at the catalog would leave the canary
   // measuring no traffic at all, which the query scores as NaN and fails by
   // design. Listing the user's own orders is the cheapest authed read
-  // order-svc has.
+  // order has.
   const res = http.get(`${BASE}/api/orders`, {
     headers: { Authorization: `Bearer ${data.token}` },
   });

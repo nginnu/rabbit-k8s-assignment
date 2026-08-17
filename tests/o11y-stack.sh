@@ -163,19 +163,21 @@ print(' '.join(sorted(out)))" 2>/dev/null)
 
 # No service mesh sits on this path — that returns in a later stage. Nothing
 # propagates trace context for the application, so it has to pass traceparent
-# itself. Four services in one trace is the evidence that it does:
-# notification joined the checkout when payment-svc started calling it, and it
-# propagates the same way (otelhttp both ends) — a regression in either hop
-# shows up here as a missing service.
+# itself. Three services in one trace is the evidence that it does:
+# order validates and marks itself paid in-process now (payment-svc merged
+# into it, so that hop is a function call, not a span across a service
+# boundary) and notification joined the checkout when order started calling
+# it — it propagates the same way (otelhttp both ends), so a regression in
+# either hop shows up here as a missing service.
 missing=""
-for svc in platform-local-payment-svc platform-local-order-svc platform-local-payment platform-local-notification; do
+for svc in platform-local-order platform-local-payment platform-local-notification; do
   case " $services " in
     *" $svc "*) : ;;
     *) missing="$missing ${svc#platform-local-}" ;;
   esac
 done
 if [ -z "$missing" ]; then
-  ok "one trace spans payment-svc, order-svc, payment and notification"
+  ok "one trace spans order, payment and notification"
 else
   bad "trace is missing:$missing — context is not propagating"
   note "saw: ${services:-nothing}"

@@ -125,13 +125,13 @@ for b in d.get('batches', []):
     out.add((at.get('service.name') or '?').replace('platform-local-', ''))
 print(' '.join(sorted(out)))" 2>/dev/null)
 
-# Payment calls orders to validate, the bank to charge, orders again to mark
-# it paid, then notification to announce it. All four in one trace is the
-# thing worth proving: no service mesh sits on this path (that returns in a
-# later stage), so nothing propagates context for you — the application passes
-# traceparent itself.
+# order validates and marks the order paid itself now — payment-svc merged
+# into it — then calls payment (the bank) to charge, then notification to
+# announce it. All three in one trace is the thing worth proving: no service
+# mesh sits on this path (that returns in a later stage), so nothing
+# propagates context for you — the application passes traceparent itself.
 missing=""
-for svc in payment-svc order-svc payment notification; do
+for svc in order payment notification; do
   case " $services " in
     *" $svc "*) : ;;
     *) missing="$missing $svc" ;;

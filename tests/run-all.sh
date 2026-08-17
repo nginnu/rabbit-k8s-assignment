@@ -11,7 +11,7 @@
 
 cd "$(dirname "$0")" || exit 1
 
-SUITES="unit.sh routing.sh route-isolation.sh mesh.sh istio.sh auth.sh checkout.sh o11y-stack.sh o11y-journey.sh tls-proof.sh resilience.sh"
+SUITES="unit.sh routing.sh route-isolation.sh internal-routes.sh mesh.sh istio.sh auth.sh checkout.sh o11y-stack.sh o11y-journey.sh tls-proof.sh resilience.sh"
 
 failed=""
 for suite in $SUITES; do

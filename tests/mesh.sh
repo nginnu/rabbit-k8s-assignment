@@ -57,7 +57,7 @@ expect "all nodes Ready         " "$total" "$ready"
 section "denied path: web-ui cannot reach mariadb"
 
 # platform/manifests/local/data/netpol.yaml opens mariadb:3306 only to
-# auth, order-svc, payment-svc in api, named explicitly, not by
+# auth, catalog, order in api, named explicitly, not by
 # namespace. charts/apps/web-ui/values.yaml's networkPolicyPeers.egress is
 # [alloy], never mariadb — web-ui in web has no allow-rule to 3306.
 # TODO.md's Deferred section is why this check exists.

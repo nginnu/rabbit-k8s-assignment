@@ -43,7 +43,7 @@ section "every api service pod carries a ready sidecar"
 # sidecar appears only after the commit is pushed and Argo syncs — warned
 # about below, not failed on, or every fresh clone is red over a push that has
 # not happened yet.
-for svc in auth catalog order-svc payment-svc payment; do
+for svc in auth catalog order payment; do
   pods=$(kubectl -n "$API_NS" get pods -l app.kubernetes.io/name="$svc" \
     -o jsonpath='{.items[*].metadata.name}' 2>/dev/null)
   if [ -z "$pods" ]; then

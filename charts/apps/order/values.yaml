@@ -88,10 +88,10 @@ services:
             # Istio there is no canary-only label to split on.
             query: |
               sum(rate(http_server_request_duration_seconds_count{
-                service="order-svc",
+                service="order",
                 http_response_status_code!~"5.."
               }[2m]))
               /
               sum(rate(http_server_request_duration_seconds_count{
-                service="order-svc"
+                service="order"
               }[2m]))

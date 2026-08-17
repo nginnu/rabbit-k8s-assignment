@@ -83,8 +83,9 @@ fi
 expect "starts pending         " pending "$order_status"
 
 section "4. pay"
-# payment-svc calls order-svc to validate, then the bank, then order-svc again
-# to mark it paid. One request, three services.
+# order validates itself, calls payment (the bank) to charge, then marks
+# itself paid. payment-svc merged into order, so what used to be two
+# services calling each other is now one service and one outbound hop.
 #
 # amount is not sent: the server derives it from products.price joined on the
 # order, not from whatever the client posts. See the negative case below,
@@ -154,7 +155,7 @@ else
 fi
 
 section "the notification leg"
-# payment-svc also POSTs /notify to the notification service once the payment
+# order also POSTs /notify to the notification service once the payment
 # settles. Nothing above this section would notice that leg missing: the call
 # is deliberately non-fatal, so a purchase can fully succeed with it broken.
 
@@ -187,20 +188,20 @@ else
 fi
 
 # The caller's side of the same call. Either line alone could be stale from an
-# earlier run; the pair — payment-svc saying sent, notification saying
-# received, both carrying this payment's id — is what makes it proof.
+# earlier run; the pair — order saying sent, notification saying received,
+# both carrying this payment's id — is what makes it proof.
 sent=0
 for _ in $(seq 1 10); do
-  sent=$(kubectl -n "$API_NS" logs -l app.kubernetes.io/name=payment-svc --prefix --tail=-1 2>/dev/null \
+  sent=$(kubectl -n "$API_NS" logs -l app.kubernetes.io/name=order --prefix --tail=-1 2>/dev/null \
     | grep '"notification sent"' | grep "\"order_id\":$order_id," \
     | grep -c "\"payment_id\":$payment_id,")
   [ "${sent:-0}" -ge 1 ] && break
   sleep 1
 done
 if [ "${sent:-0}" -ge 1 ]; then
-  ok "payment-svc logged \"notification sent\" for payment $payment_id"
+  ok "order logged \"notification sent\" for payment $payment_id"
 else
-  bad "no \"notification sent\" line in payment-svc for payment $payment_id — the leg failed before it reached notification"
+  bad "no \"notification sent\" line in order for payment $payment_id — the leg failed before it reached notification"
 fi
 
 section "failure simulation"
