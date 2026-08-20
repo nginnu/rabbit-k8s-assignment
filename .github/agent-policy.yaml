@@ -1,0 +1,94 @@
+# Tool governance for agents that touch this repository.
+#
+# Stands in for GitLab Duo Agent Platform / Tool Governance, which has no
+# equivalent on GitHub. The shape is the part that matters: every tool an agent
+# may reach for is listed with a decision, and the decision is enforced by
+# grepping the tracked tree for what its use actually looks like. A governed
+# binary the repo invokes but this file never names falls to `unlisted_default`
+# — a policy that only lists what it forbids stops covering the repo the day
+# someone reaches for a tool nobody thought to write down.
+#
+# decisions
+#   allow  used freely
+#   ask    permitted, but a human signs off — CI annotates, does not fail
+#   deny   CI fails the run when a match is found in tracked files
+
+version: 1
+unlisted_default: ask
+
+# Prose that quotes a command is not a command. Without this the docs directory
+# alone contributes most of the findings and the report stops being read.
+scan_exclude:
+  - 'docs/*'
+  - 'notes/*'
+  - '*.md'
+
+tools:
+  - name: kubectl-read
+    decision: allow
+    reason: read-only cluster inspection, used by tests/*.sh
+    match:
+      - '\bkubectl (get|describe|logs|explain)\b'
+
+  - name: kubectl-write
+    decision: ask
+    reason: mutates the cluster; belongs in a Makefile target a human runs
+    match:
+      - '\bkubectl (apply|delete|patch|replace|scale)\b'
+
+  - name: helm-install
+    decision: ask
+    reason: ArgoCD owns sync — a direct install drifts from what the repo says
+    match:
+      - '\bhelm (install|upgrade)\b'
+
+  - name: terraform-plan
+    decision: allow
+    reason: plan makes no change
+    match:
+      - '\bterraform +plan\b'
+
+  - name: terraform-apply
+    decision: deny
+    reason: nothing in CI may create billable GCP infrastructure
+    match:
+      - '\bterraform +apply\b'
+      - '\bterraform +destroy\b'
+
+  - name: curl-pipe-shell
+    decision: deny
+    reason: executes whatever the far end serves today, unpinned and unreviewed
+    match:
+      - 'curl[^|\n]*\|\s*(sudo\s+)?(ba)?sh'
+      - 'wget[^|\n]*\|\s*(sudo\s+)?(ba)?sh'
+
+  - name: docker-push
+    decision: allow
+    reason: the release workflow's whole purpose
+    match:
+      - '\bdocker (push|buildx build .*--push)\b'
+
+# Stands in for NeMo Guardrails / Guardrails AI, which are libraries an LLM
+# application imports at runtime, not CI tools. What is portable is the idea:
+# named rails with a decision, checked before merge.
+guardrails:
+  - name: no-inline-model-credentials
+    decision: deny
+    reason: a model API key in the tree is a leaked key, scanner or not
+    match:
+      - 'sk-[A-Za-z0-9]{20,}'
+      - 'ANTHROPIC_API_KEY\s*[:=]\s*["'']?[A-Za-z0-9_-]{20,}'
+
+  - name: no-model-calls-from-cluster-manifests
+    decision: deny
+    reason: a manifest that calls an external model at apply time is not declarative
+    match:
+      - 'api\.openai\.com'
+      - 'api\.anthropic\.com'
+
+  - name: prompt-templates-are-reviewed
+    decision: ask
+    reason: prompt text is application behaviour and belongs in a reviewed file
+    match:
+      - 'system_prompt\s*='
+      - 'SYSTEM_PROMPT\s*='

@@ -1,0 +1,250 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    # main here, master in the app repos until they are renamed. Listing both
+    # means a rename does not silently stop every check from running.
+    branches: [main, master]
+
+# A second push to the same branch makes the first run's answer stale before it
+# finishes. Cancelling it frees the runner instead of racing for the same
+# status check.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Nothing is granted by default; every job below opts in to exactly what it
+# writes. A workflow that starts from write-all hands each new job the union of
+# every permission any job ever needed.
+permissions: {}
+
+env:
+  GITLEAKS_VERSION: "8.30.1"
+  TRUFFLEHOG_VERSION: "3.97.0"
+  CONFTEST_VERSION: "0.69.0"
+  KUBECONFORM_VERSION: "0.8.0"
+  SHELLCHECK_VERSION: "0.11.0"
+  SEMGREP_VERSION: "1.173.0"
+
+jobs:
+  # Runs alone and first. Everything after it reads the same tree, and there is
+  # no point scanning code for bugs while a live credential sits in it.
+  guardrails:
+    name: guardrails · secrets
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # gitleaks scans history. At the default depth of 1 it sees one commit
+          # and reports clean on a repo that leaked a key last year.
+          fetch-depth: 0
+
+      - name: install gitleaks
+        run: |
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
+
+      - name: gitleaks · full history
+        run: |
+          gitleaks git . \
+            --report-format sarif \
+            --report-path gitleaks.sarif \
+            --redact \
+            --exit-code 1
+
+      - name: install trufflehog
+        if: always()
+        run: |
+          curl -sSfL "https://github.com/trufflesecurity/trufflehog/releases/download/v${TRUFFLEHOG_VERSION}/trufflehog_${TRUFFLEHOG_VERSION}_linux_amd64.tar.gz" \
+            | tar -xz -C /usr/local/bin trufflehog
+          trufflehog --version
+
+      # gitleaks answers "does this look like a secret". trufflehog answers "is
+      # this secret live right now" by calling the provider. Only the second is
+      # worth failing a build over on its own, so it runs with --only-verified.
+      - name: trufflehog · verified only
+        if: always()
+        run: |
+          trufflehog git file://. --only-verified --fail --json > trufflehog.json || status=$?
+          cat trufflehog.json
+          exit "${status:-0}"
+
+      - name: upload sarif
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: gitleaks.sarif
+          category: gitleaks
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: guardrails-reports
+          path: |
+            gitleaks.sarif
+            trufflehog.json
+          retention-days: 14
+
+  # The OPA gate. Runs the rules against their own unit tests first: a rule that
+  # matches nothing passes every manifest and reports a clean scan.
+  policy:
+    name: policy · opa
+    needs: guardrails
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install conftest
+        run: |
+          curl -sSfL "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz" \
+            | tar -xz -C /usr/local/bin conftest
+          conftest --version
+
+      - name: rego unit tests
+        run: conftest verify --policy policy
+
+      # values.yaml files are Helm input, not Kubernetes objects — parsed as
+      # manifests they have no kind and every rule skips them, which reads as a
+      # pass.
+      - name: workload rules
+        run: |
+          conftest test \
+            --policy policy \
+            --namespace main \
+            --ignore '.*/values\.yaml' \
+            k8s-local/
+
+      # --combine hands every document to the policy at once. "This namespace
+      # has a default-deny" is a question about two files, and per-file
+      # evaluation can never answer it.
+      - name: namespace isolation rules
+        run: |
+          conftest test \
+            --policy policy \
+            --namespace netpol \
+            --combine \
+            --ignore '.*/values\.yaml' \
+            k8s-local/
+
+  manifests:
+    name: manifests · schema
+    needs: guardrails
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install kubeconform
+        run: |
+          curl -sSfL "https://github.com/yannh/kubeconform/releases/download/v${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
+            | tar -xz -C /usr/local/bin kubeconform
+          kubeconform -v
+
+      # Gateway API and cert-manager types are not in the upstream schema set;
+      # -ignore-missing-schemas keeps them from failing while every core object
+      # is still checked. Without -strict a typo in a field name is accepted in
+      # CI and dropped at admission.
+      - name: kubeconform
+        run: |
+          kubeconform \
+            -strict \
+            -summary \
+            -ignore-missing-schemas \
+            -ignore-filename-pattern '.*values\.yaml' \
+            -kubernetes-version 1.31.0 \
+            k8s-local/
+
+  governance:
+    name: governance · agent tools
+    needs: guardrails
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install --quiet pyyaml
+      - name: agent tool policy
+        run: python .github/scripts/agent-governance.py --json governance.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: governance-report
+          path: governance.json
+          retention-days: 14
+
+  shell:
+    name: shell · shellcheck
+    needs: guardrails
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: install shellcheck
+        run: |
+          curl -sSfL "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.x86_64.tar.xz" \
+            | tar -xJ --strip-components=1 -C /usr/local/bin "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
+          shellcheck --version
+      # The test scripts deliberately do not set -e — they record failures and
+      # keep going — which makes unquoted expansions and unset variables the
+      # kind of bug that changes a result instead of stopping a run.
+      - run: shellcheck --severity=warning scripts/*.sh tests/*.sh
+
+  sast:
+    name: sast · semgrep
+    needs: guardrails
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install --quiet "semgrep==${SEMGREP_VERSION#v}"
+      # p/ci is the ruleset that runs without a Semgrep account. The registry is
+      # fetched at run time, so this is the one step whose findings can change
+      # without the repo changing.
+      - name: semgrep
+        run: semgrep --config p/ci --sarif --output semgrep.sarif --error
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: semgrep-sarif
+          path: semgrep.sarif
+          retention-days: 14
+
+  # One check to require in branch protection. Without it the rule has to name
+  # every job, and a job added next month is not required until someone
+  # remembers to add it there too.
+  gate:
+    name: ci gate
+    needs: [guardrails, policy, manifests, governance, shell, sast]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: fail if any job failed
+        run: |
+          echo '${{ toJSON(needs) }}'
+          if echo '${{ toJSON(needs) }}' | grep -q '"result": *"\(failure\|cancelled\)"'; then
+            echo "::error::one or more ci jobs failed"
+            exit 1
+          fi

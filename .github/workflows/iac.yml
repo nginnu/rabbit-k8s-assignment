@@ -1,0 +1,117 @@
+name: iac
+
+on:
+  pull_request:
+    paths: ["gcp/**", ".github/workflows/iac.yml"]
+  push:
+    branches: [main, master]
+    paths: ["gcp/**", ".github/workflows/iac.yml"]
+
+concurrency:
+  group: iac-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
+env:
+  TERRAFORM_VERSION: "1.9.8"
+  CHECKOV_VERSION: "3.3.12"
+  TRIVY_VERSION: "0.74.0"
+
+jobs:
+  terraform:
+    name: terraform · fmt + validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: [dev, prod]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          # The wrapper rewrites stdout to feed step outputs, which turns a
+          # plain `terraform fmt -check` diff into unreadable noise.
+          terraform_wrapper: false
+
+      - name: fmt
+        run: terraform fmt -check -recursive gcp/
+
+      # -backend=false: validate needs the providers, not the state. Configuring
+      # a real backend here would have CI authenticate to GCS just to check
+      # syntax, and give the job credentials it has no reason to hold.
+      - name: init
+        working-directory: gcp/environments/${{ matrix.environment }}
+        run: terraform init -backend=false -input=false
+
+      - name: validate
+        working-directory: gcp/environments/${{ matrix.environment }}
+        run: terraform validate -no-color
+
+  checkov:
+    name: iac scan · checkov
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install --quiet "checkov==${CHECKOV_VERSION}"
+
+      # --soft-fail is deliberately absent. A scanner that cannot fail the build
+      # is a report, and reports on a green pipeline do not get read.
+      - name: checkov
+        run: |
+          checkov \
+            --directory gcp/ \
+            --framework terraform \
+            --output sarif --output-file-path . \
+            --compact --quiet
+
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: results.sarif
+          category: checkov
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: checkov-sarif
+          path: results.sarif
+          retention-days: 14
+
+  # Second opinion on the same files. tfsec is not used: its own README says
+  # engineering attention has moved to Trivy and points the community there
+  # (https://github.com/aquasecurity/tfsec#-tfsec-to-trivy-migration), so
+  # `trivy config` is tfsec's scanning engine with the maintenance behind it.
+  trivy-config:
+    name: iac scan · trivy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: install trivy
+        run: |
+          curl -sSfL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
+            | tar -xz -C /usr/local/bin trivy
+          trivy --version
+      - name: trivy config
+        run: |
+          trivy config gcp/ \
+            --severity HIGH,CRITICAL \
+            --exit-code 1 \
+            --format sarif \
+            --output trivy-iac.sarif
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-iac.sarif
+          category: trivy-config
