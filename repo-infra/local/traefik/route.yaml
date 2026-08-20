@@ -1,0 +1,32 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: traefik-dashboard
+  namespace: gateway
+spec:
+  hostnames:
+    - traefik.localhost
+  parentRefs:
+    - name: external
+      namespace: gateway
+      # Without this the route also attaches to `web` and the dashboard is
+      # served in plaintext on :80.
+      sectionName: websecure
+  rules:
+    - matches:
+        - path: { type: PathPrefix, value: / }
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path: { type: ReplacePrefixMatch, replacePrefixMatch: /dashboard }
+      backendRefs:
+        - name: traefik
+          port: 8080
+    # Not rewritten: the dashboard calls /api/overview and /api/http/routers as
+    # absolute paths. A longer prefix outranks the / above, so these keep
+    # reaching the admin API instead of being rewritten under /dashboard.
+    - matches:
+        - path: { type: PathPrefix, value: /api }
+      backendRefs:
+        - name: traefik
+          port: 8080

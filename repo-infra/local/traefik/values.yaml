@@ -1,0 +1,65 @@
+deployment:
+  replicas: 1
+
+updateStrategy:
+  type: Recreate
+
+nodeSelector:
+  ingress-ready: "true"
+tolerations:
+  - key: node-role.kubernetes.io/control-plane
+    operator: Exists
+    effect: NoSchedule
+
+providers:
+  kubernetesGateway:
+    enabled: true
+    statusAddress:
+      hostname: localhost
+      service:
+        enabled: false
+  kubernetesIngress:
+    enabled: false
+  kubernetesCRD:
+    enabled: false
+
+ingressClass:
+  enabled: false
+
+api:
+  dashboard: true
+  insecure: true
+
+ports:
+  web:
+    hostPort: 80
+  websecure:
+    hostPort: 443
+  traefik:
+    expose:
+      default: true
+
+service:
+  spec:
+    type: ClusterIP
+
+accessLog:
+  enabled: true
+
+global:
+  checkNewVersion: false
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+
+gateway:
+  enabled: false
+
+gatewayClass:
+  enabled: false

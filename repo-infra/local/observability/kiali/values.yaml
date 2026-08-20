@@ -1,0 +1,36 @@
+auth:
+  strategy: anonymous
+
+istio_namespace: istio-system
+
+deployment:
+  # Kind runs three nodes on one machine; the chart's defaults are sized for
+  # a real cluster and land Kiali competing with the LGTM stack for memory.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  service_type: ClusterIP
+  # This repo writes the tier's policy itself, in
+  # platform/observability/netpol.yaml. The chart ships its own under the same
+  # object name, and helm refuses to install over an object another hand
+  # created.
+  network_policy:
+    enabled: false
+
+server:
+  web_root: /
+
+external_services:
+  prometheus:
+    url: http://prometheus-server.observability.svc.cluster.local
+  grafana:
+    # external_url/internal_url are the 2.30 names — url/in_cluster_url log a
+    # deprecation notice on every boot.
+    external_url: https://grafana.localhost
+    internal_url: http://grafana.observability.svc.cluster.local
+  tracing:
+    enabled: false

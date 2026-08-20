@@ -1,0 +1,23 @@
+pilot:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  autoscaleEnabled: false
+
+meshConfig:
+  accessLogFile: /dev/stdout
+
+global:
+  proxy:
+    resources:
+      requests:
+        cpu: 30m
+        memory: 96Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi

@@ -1,0 +1,82 @@
+ipam:
+  mode: kubernetes
+
+k8sNetworkPolicy:
+  enabled: true
+
+gatewayAPI:
+  enabled: false
+  gatewayClass:
+    create: false
+
+ingressController:
+  enabled: false
+  default: false
+
+kubeProxyReplacement: "false"
+
+cni:
+  chainingMode: portmap
+
+hubble:
+  enabled: true
+  relay:
+    enabled: true
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+  ui:
+    enabled: true
+    backend:
+      resources:
+        requests:
+          cpu: 25m
+          memory: 64Mi
+        limits:
+          cpu: 200m
+          memory: 128Mi
+    frontend:
+      resources:
+        requests:
+          cpu: 10m
+          memory: 32Mi
+        limits:
+          cpu: 100m
+          memory: 64Mi
+
+authentication:
+  enabled: false
+  mutual:
+    spire:
+      enabled: false
+
+envoy:
+  enabled: true
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+
+operator:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi

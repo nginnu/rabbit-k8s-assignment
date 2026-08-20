@@ -1,0 +1,28 @@
+apiVersion: kind.x-k8s.io/v1alpha4
+kind: Cluster
+
+networking:
+  disableDefaultCNI: true
+  kubeProxyMode: iptables
+
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      # Marks this node as the ingress host so the gateway can be pinned here,
+      # where the port mappings below actually exist.
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+    extraPortMappings:
+      - containerPort: 80
+        hostPort: 80
+        protocol: TCP
+      - containerPort: 443
+        hostPort: 443
+        protocol: TCP
+
+  - role: worker
+  - role: worker
+  

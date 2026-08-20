@@ -1,0 +1,34 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: gateway-tls
+  # The Gateway reads its certificate from a Secret in its own namespace, and
+  # the Gateway now comes from the Traefik release — a Secret left in another
+  # namespace needs a ReferenceGrant beside it, or the listener resolves no
+  # certificate and :443 answers with Traefik's self-signed default.
+  namespace: gateway
+spec:
+  secretName: gateway-tls
+  # Every host the gateway answers on, listed explicitly. A wildcard would not
+  # help: *.localhost does not cover localhost itself, and each admin tool moved
+  # to its own name — a host missing here is a browser TLS warning, not a 404.
+  dnsNames:
+    - localhost
+    - grafana.localhost
+    - argocd.localhost
+    - traefik.localhost
+    - hubble.localhost
+    - kiali.localhost
+  # So a request that bypasses name resolution validates too, rather than
+  # failing on a SAN mismatch.
+  ipAddresses:
+    - 127.0.0.1
+  issuerRef:
+    name: mkcert-ca
+    kind: ClusterIssuer
+    group: cert-manager.io
+  duration: 2160h
+  renewBefore: 360h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
