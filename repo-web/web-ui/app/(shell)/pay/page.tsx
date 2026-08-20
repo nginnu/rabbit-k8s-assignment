@@ -3,13 +3,12 @@
 import { useState, useEffect, FormEvent, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
-  getToken,
-  getUserId,
-  getSessionId,
+  me,
   createPayment,
   PaymentMethod,
   PaymentResult,
 } from "@/lib/api";
+import type { Me } from "@/lib/api";
 import TraceBadge from "@/components/TraceBadge";
 
 // Labels + copy for the four methods payment-svc accepts. "cod" carries a
@@ -42,18 +41,22 @@ function PayForm() {
   const [error, setError] = useState("");
   const [result, setResult] = useState<PaymentResult | null>(null);
   const [traceId, setTraceId] = useState<string | null>(null);
+  const [meInfo, setMeInfo] = useState<Me | null>(null);
 
   useEffect(() => {
-    if (!getToken()) {
-      router.replace("/login");
-      return;
-    }
     const oid = searchParams.get("order_id");
     const amt = searchParams.get("amount");
     const pname = searchParams.get("product_name");
     if (oid) setOrderId(oid);
     if (amt) setAmount(amt);
     if (pname) setProductName(pname);
+    me().then((res) => {
+      if (res.ok && "user_id" in res.data) {
+        setMeInfo(res.data);
+      } else {
+        router.replace("/login");
+      }
+    });
   }, [router, searchParams]);
 
   const handleSubmit = async (e: FormEvent) => {
@@ -137,8 +140,8 @@ function PayForm() {
         <TraceBadge
           traceId={traceId}
           orderId={orderId}
-          userId={getUserId()}
-          sessionId={getSessionId()}
+          userId={meInfo?.user_id ?? null}
+          sessionId={meInfo?.session_id ?? null}
         />
       </div>
 

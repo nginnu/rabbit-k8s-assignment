@@ -3,74 +3,22 @@
 // digest from being promoted unchanged from local to production.
 //
 // The prefix is required rather than cosmetic: the UI serves its own /orders
-// page, which would collide with order-svc's /orders API on the same origin.
-// The gateway strips /api before forwarding, so backend paths are untouched:
+// page, which would collide with the order API's /orders on the same origin.
+// Route handlers under app/api own these paths and forward in-cluster, so
+// the backends keep the paths they serve:
 //
 //   /api/auth/login  → auth         /auth/login
-//   /api/products    → catalog      /products   (public, no Authorization)
+//   /api/products    → catalog      /products   (public, no credentials)
 //   /api/orders      → order-svc    /orders
-//   /api/payments    → payment-svc  /payments
+//   /api/payments    → order-svc    /payments
 //
 // One constant, not one per backend: the browser only ever sees this single
-// same-origin prefix — which service answers behind the gateway is a routing
-// decision, not something the frontend distinguishes between call sites. A
-// name like ORDER_URL used to build the catalog URL lied about that.
+// same-origin prefix — which service answers behind the BFF is a routing
+// decision, not something the frontend distinguishes between call sites.
+//
+// The JWT never reaches this file's callers: the BFF keeps it in an HttpOnly
+// cookie and attaches it server-side, so scripts on the page cannot read it.
 const API_BASE = "/api";
-
-// ── JWT + session helpers ────────────────────────────────────
-export function getToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return sessionStorage.getItem("jwt");
-}
-
-export function setToken(token: string) {
-  sessionStorage.setItem("jwt", token);
-}
-
-export function clearToken() {
-  sessionStorage.removeItem("jwt");
-  sessionStorage.removeItem("session_id");
-}
-
-export function getSessionId(): string | null {
-  if (typeof window === "undefined") return null;
-  return sessionStorage.getItem("session_id");
-}
-
-export function setSessionId(sessionId: string) {
-  sessionStorage.setItem("session_id", sessionId);
-}
-
-/** Decode JWT payload (base64url) — no signature verification, display only */
-interface JwtPayload {
-  uid?: number;
-  usr?: string;
-  sid?: string;
-  exp?: number;
-}
-function decodeJwt(token: string): JwtPayload | null {
-  try {
-    const part = token.split(".")[1];
-    if (!part) return null;
-    const b64 = part.replace(/-/g, "+").replace(/_/g, "/");
-    const pad = b64.length % 4 ? 4 - (b64.length % 4) : 0;
-    return JSON.parse(atob(b64 + "=".repeat(pad)));
-  } catch {
-    return null;
-  }
-}
-
-export function getUserId(): number | null {
-  const t = getToken();
-  if (!t) return null;
-  return decodeJwt(t)?.uid ?? null;
-}
-
-export function getUsername(): string | null {
-  const t = getToken();
-  if (!t) return null;
-  return decodeJwt(t)?.usr ?? null;
-}
 
 // ── Trace ID extraction ──────────────────────────────────────
 // traceresponse header format: 00-<trace_id>-<span_id>-<flags>
@@ -93,14 +41,10 @@ async function apiFetch<T = unknown>(
   url: string,
   init: RequestInit = {}
 ): Promise<ApiResult<T>> {
-  const token = getToken();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(init.headers as Record<string, string>),
   };
-  if (token) {
-    headers["Authorization"] = `Bearer ${token}`;
-  }
 
   const res = await fetch(url, { ...init, headers });
   const traceId = extractTraceId(res.headers);
@@ -129,6 +73,23 @@ export async function login(username: string, password: string) {
   }>(`${API_BASE}/auth/login`, {
     method: "POST",
     body: JSON.stringify({ username, password }),
+  });
+}
+
+export interface Me {
+  user_id: number;
+  username: string | null;
+  session_id: string | null;
+  expires_at: string | null;
+}
+
+export async function me() {
+  return apiFetch<Me | { error?: string }>(`${API_BASE}/auth/me`);
+}
+
+export async function logout() {
+  return apiFetch<{ error?: string }>(`${API_BASE}/auth/logout`, {
+    method: "POST",
   });
 }
 

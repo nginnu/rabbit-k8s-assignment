@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { getToken, getUsername, clearToken } from "@/lib/api";
+import { me, logout } from "@/lib/api";
 
 export default function Nav() {
   const router = useRouter();
@@ -10,21 +10,19 @@ export default function Nav() {
   const [loggedIn, setLoggedIn] = useState(false);
   const [username, setUsername] = useState<string | null>(null);
 
-  // Re-check the token on every route change, so a login or logout redirect
-  // updates the nav.
-  //
-  // No `storage` event listener here: the session lives in sessionStorage
-  // (clearToken/setToken in lib/api.ts), and the storage event only fires
-  // for localStorage, and only in *other* tabs — sessionStorage is per-tab
-  // to begin with, so there is no cross-tab state to react to. A listener
-  // for it is dead code that looks like cross-tab sync but never runs.
+  // Re-check the session on every route change, so a login or logout
+  // redirect updates the nav. The token lives in an HttpOnly cookie, so the
+  // client asks the BFF who it is rather than reading storage — and there is
+  // no cross-tab event to listen for either way.
   useEffect(() => {
-    setLoggedIn(!!getToken());
-    setUsername(getUsername());
+    me().then((res) => {
+      setLoggedIn(res.ok);
+      setUsername(res.ok && "username" in res.data ? res.data.username : null);
+    });
   }, [pathname]);
 
-  const handleLogout = () => {
-    clearToken();
+  const handleLogout = async () => {
+    await logout();
     setLoggedIn(false);
     setUsername(null);
     router.push("/login");

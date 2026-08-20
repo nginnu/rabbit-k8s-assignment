@@ -2,7 +2,7 @@
 
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
-import { login, setSessionId, setToken } from "@/lib/api";
+import { login } from "@/lib/api";
 import TraceBadge from "@/components/TraceBadge";
 
 export default function LoginPage() {
@@ -23,8 +23,6 @@ export default function LoginPage() {
       setTraceId(res.traceId);
 
       if (res.ok && res.data.token) {
-        setToken(res.data.token);
-        if (res.data.session_id) setSessionId(res.data.session_id);
         router.push("/orders");
       } else {
         setError(res.data.error || `Login failed (${res.status})`);

@@ -3,16 +3,15 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
-  getToken,
-  getUserId,
-  getSessionId,
-  clearToken,
+  me,
+  logout,
   listProducts,
   listOrders,
   createOrder,
   Product,
   Order,
 } from "@/lib/api";
+import type { Me } from "@/lib/api";
 import TraceBadge from "@/components/TraceBadge";
 import JerseyArt from "@/components/JerseyArt";
 
@@ -36,6 +35,7 @@ export default function OrdersPage() {
   const router = useRouter();
 
   const [loggedIn, setLoggedIn] = useState(false);
+  const [meInfo, setMeInfo] = useState<Me | null>(null);
 
   const [products, setProducts] = useState<Product[]>([]);
   const [productsState, setProductsState] = useState<FetchState>("loading");
@@ -49,9 +49,9 @@ export default function OrdersPage() {
   const [buyError, setBuyError] = useState("");
   const [traceId, setTraceId] = useState<string | null>(null);
 
-  // /api/products needs no Authorization any more — it is fetched
-  // unconditionally, logged in or not. /api/orders is genuinely per-user, so
-  // it is only fetched (and only rendered) when a token is present.
+  // /api/products needs no credentials — it is fetched unconditionally,
+  // logged in or not. /api/orders is genuinely per-user, so it is only
+  // fetched (and only rendered) when the BFF session cookie is valid.
   const fetchProducts = useCallback(async () => {
     setProductsState("loading");
     try {
@@ -82,11 +82,14 @@ export default function OrdersPage() {
         return;
       }
       if (res.status === 401) {
-        // The token this page started with is gone or expired. Order history
-        // is the only part of this page that requires it, so drop back to
-        // the anonymous view instead of a hard redirect — the catalog above
-        // is still public and shouldn't disappear along with the session.
-        clearToken();
+        // The session this page started with is gone or expired. Order
+        // history is the only part of this page that requires it, so drop
+        // back to the anonymous view instead of a hard redirect — the
+        // catalog above is still public and shouldn't disappear along with
+        // the session. The cookie itself is HttpOnly, so only the BFF can
+        // clear it.
+        logout();
+        setMeInfo(null);
         setLoggedIn(false);
         return;
       }
@@ -100,15 +103,14 @@ export default function OrdersPage() {
   }, []);
 
   useEffect(() => {
-    const hasToken = !!getToken();
-    setLoggedIn(hasToken);
-    // Independent requests, not Promise.all: a products failure used to
-    // discard a perfectly good orders response (and vice versa) because
-    // Promise.all rejects/resolves as one unit. Firing them separately means
-    // one endpoint being down never hides data the other successfully
-    // returned.
     fetchProducts();
-    if (hasToken) fetchOrders();
+    me().then((res) => {
+      if (res.ok && "user_id" in res.data) {
+        setMeInfo(res.data);
+        setLoggedIn(true);
+        fetchOrders();
+      }
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -174,8 +176,8 @@ export default function OrdersPage() {
         </div>
         <TraceBadge
           traceId={traceId}
-          userId={getUserId()}
-          sessionId={getSessionId()}
+          userId={meInfo?.user_id ?? null}
+          sessionId={meInfo?.session_id ?? null}
         />
       </section>
 
