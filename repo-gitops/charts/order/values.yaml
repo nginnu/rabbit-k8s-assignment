@@ -1,0 +1,53 @@
+# order
+
+namespace: api
+
+sharedConfig:
+  name: app-config
+
+sharedSecret:
+  name: app-secrets
+
+services:
+  order:
+    image:
+      repository: order
+      tag: v0.1.0
+      pullPolicy: Never
+    port: 9002
+    replicas: 2
+    workloadKind: Deployment
+    uid: 10001
+    probes:
+      liveness:  { path: /healthz, initialDelaySeconds: 10, periodSeconds: 15 }
+      readiness: { path: /healthz, initialDelaySeconds: 5,  periodSeconds: 5 }
+    resources:
+      requests: { cpu: 50m,  memory: 96Mi }
+      limits:   { cpu: 500m, memory: 384Mi }
+    env:
+      - { name: APP_PORT, value: "9002" }
+      - { name: PAYMENT_GATEWAY_URL, value: "http://payment.api.svc.cluster.local" }
+      - { name: NOTIFICATION_URL, value: "http://notification.api.svc.cluster.local" }
+      # Fraction of business requests answered with 500. 0 is off; raise it to
+      # deploy a build that passes /healthz but serves errors — the fault the
+      # app-level checks cannot see.
+      - { name: FAIL_RATE, value: "0" }
+    envFromSecret:
+      - mariadb-dsn
+      - jwt-secret
+    topologySpread: true
+    pdb: { minAvailable: 1 }
+
+    # Meshed like its siblings: edge traffic arrives plaintext from Traefik,
+    # and the payment and notification hops in the egress list below are the
+    # service-to-service calls that ride the mesh.
+    mesh: true  # adds netpol istiod (egress) + alloy-scrape:15020 (ingress)
+
+    networkPolicy: true
+    networkPolicyPeers:
+      # The gateway at the edge and web-ui's BFF forwarding /api/orders and
+      # /api/payments from the web namespace.
+      ingress: [svc:web/web-ui]
+      # Calls payment gateway (external charge) and notification (async alert).
+      # No redis: catalog split moved product cache there.
+      egress: [svc:payment, svc:notification, mariadb]

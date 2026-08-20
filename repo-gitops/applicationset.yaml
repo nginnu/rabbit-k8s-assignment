@@ -1,0 +1,44 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: charts
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+
+  generators:
+    - git:
+        repoURL: https://github.com/nginnu/rabbit-k8s-assignment.git
+        revision: main
+        files:
+          - path: repo-gitops/charts/*/values.yaml
+          - path: repo-gitops/charts/_template/values.yaml
+            exclude: true
+
+  template:
+    metadata:
+      name: "{{.path.basename}}"
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: default
+
+      source:
+        repoURL: https://github.com/nginnu/rabbit-k8s-assignment.git
+        path: "{{.path.path}}"
+        targetRevision: main
+        helm:
+          releaseName: "{{.path.basename}}"
+
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: "{{.namespace}}"
+
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=false
+          - ServerSideApply=true

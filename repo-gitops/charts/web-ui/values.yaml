@@ -1,0 +1,66 @@
+# web-ui
+
+namespace: web
+
+# No sharedConfig and no sharedSecret. app-config carries backend concerns —
+# collector endpoint, Redis address — that the BFF reads from its own env
+# below instead, and the storefront holds no database credentials or signing
+# key: the user's JWT travels in an HttpOnly cookie the BFF attaches
+# server-side and never exposes to the page.
+
+services:
+  web-ui:
+    image:
+      repository: web-ui
+      tag: v0.1.0
+      pullPolicy: Never
+    port: 3000
+    replicas: 2
+    workloadKind: Deployment
+    # 1001, not the 10001 the Go services use: web-ui's Dockerfile creates the
+    # nextjs user with --uid 1001, and a runAsUser the image has no account for
+    # leaves the pod unable to start.
+    uid: 1001
+    # Next.js writes its server-side cache under .next at run time, so the root
+    # filesystem cannot be read-only here. The Go services keep it read-only —
+    # this is a property of the runtime, not a relaxed standard.
+    readOnlyRootFilesystem: false
+    # Probes hit / rather than /healthz: Next.js serves no health endpoint, and
+    # a probe pointed at one that does not exist fails the pod on a route that
+    # was never implemented.
+    probes:
+      liveness:  { path: /, initialDelaySeconds: 10, periodSeconds: 15 }
+      readiness: { path: /, initialDelaySeconds: 5,  periodSeconds: 5 }
+    resources:
+      requests: { cpu: 50m,  memory: 128Mi }
+      limits:   { cpu: 500m, memory: 512Mi }
+    env:
+      - { name: PORT, value: "3000" }
+      # Next.js standalone binds localhost unless told otherwise, which makes
+      # the container reachable from nothing outside itself — the readiness
+      # probe fails and the Service has no endpoints.
+      - { name: HOSTNAME, value: "0.0.0.0" }
+      # The BFF's in-cluster backends. Server-side env only: these are read
+      # by the route handlers at runtime, never shipped to the browser the
+      # way a NEXT_PUBLIC_* var would be.
+      - { name: AUTH_URL, value: "http://auth.api.svc.cluster.local" }
+      - { name: CATALOG_URL, value: "http://catalog.api.svc.cluster.local" }
+      - { name: ORDER_URL, value: "http://order.api.svc.cluster.local" }
+    route:
+      hostnames: [localhost]
+      rules:
+        - path: /
+
+    topologySpread: true
+    pdb: { minAvailable: 1 }
+
+    networkPolicy: true
+    networkPolicyPeers:
+      # Cross-namespace, and unchanged by the web/api split: the gateway peer
+      # carries its own namespaceSelector for traefik.
+      ingress: [gateway]
+      # The BFF calls auth, catalog and order in-cluster from the web
+      # namespace, so every backend peer crosses into api — svc:<ns>/<name>
+      # carries a namespaceSelector, where a bare svc:<name> would render a
+      # podSelector scoped to web and match nothing.
+      egress: [svc:api/auth, svc:api/catalog, svc:api/order]

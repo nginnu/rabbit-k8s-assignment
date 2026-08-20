@@ -1,0 +1,62 @@
+# payment
+#
+# Stands in for an external payment gateway. It has its own release rather than
+# living beside the production services because its lifecycle is different: it
+# is torn down and replaced, never rolled out or canaried.
+
+namespace: api
+
+sharedConfig:
+  name: app-config
+
+sharedSecret:
+  name: app-secrets
+
+services:
+  payment:
+    image:
+      repository: payment
+      tag: v0.1.0
+      pullPolicy: Never
+    port: 7000
+    # One replica is honest: a real payment gateway is not something this
+    # platform runs or scales. Same reason there is no PDB and no topology
+    # spread — there is nothing to spread and no disruption budget to protect.
+    replicas: 1
+    workloadKind: Deployment
+    uid: 10001
+    probes:
+      liveness:  { path: /healthz, initialDelaySeconds: 10, periodSeconds: 15 }
+      readiness: { path: /healthz, initialDelaySeconds: 5,  periodSeconds: 5 }
+    resources:
+      requests: { cpu: 20m,  memory: 64Mi }
+      limits:   { cpu: 200m, memory: 256Mi }
+    env:
+      - { name: APP_PORT, value: "7000" }
+    # It calls config.LoadBase like the real services, so it demands the full
+    # credential set even though a gateway stand-in has no database. Supplying
+    # them beats editing source for a component built to be replaced.
+    envFromSecret:
+      - mariadb-dsn
+      - jwt-secret
+    topologySpread: false
+
+    # First workload in the mesh. Chosen over notification because helm still
+    # owns this release: notification is synced by Argo CD from main and cannot
+    # be moved without a push. Nothing reaches this service from the edge and only order
+    # calls it, so a sidecar that fails to start is contained here — and with
+    # maxUnavailable 0 the running pod is not replaced until the new one is
+    # ready, so the worst case is a stalled rollout, not a broken checkout.
+    mesh: true  # adds netpol istiod (egress) + alloy-scrape:15020 (ingress)
+
+    networkPolicy: true
+    networkPolicyPeers:
+      # Not edge-facing: a gateway stand-in is only ever called from inside.
+      ingress: [svc:order]
+      # istiod is absent on purpose: `mesh: true` above adds that egress rule,
+      # because a sidecar that cannot reach it never reports ready.
+      # No mariadb, deliberately. config.LoadBase demands MARIADB_DSN and panics
+      # without it, but it only reads the env var — main.go never calls
+      # db.OpenMariaDB. The Secret satisfies that, not a network path, so an
+      # allow rule here would carry no traffic.
+      egress: []
