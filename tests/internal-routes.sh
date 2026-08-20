@@ -4,7 +4,7 @@
 # gateway.
 #
 # The payment-svc merge deleted this route from order (see
-# apps/services/internal/payment/gateway/order_adapter.go — GetOrder and
+# apps/shop-api/internal/payment/gateway/order_adapter.go — GetOrder and
 # UpdateOrderStatus now call the usecase in-process instead of GET/PATCH
 # /internal/orders/:id over HTTP). Nothing on the gateway ever routed
 # /internal — HTTPRoute only ever matched /api/... prefixes — so hitting this
@@ -32,7 +32,7 @@ ORDER_PORT="${ORDER_PORT:-9002}"
 section "/internal/orders/:id is gone from order's own mux"
 
 # Any api pod with a shell works as the launch point; order's own image ships
-# no curl or shell to exec into (see apps/services/Dockerfile — wget is the
+# no curl or shell to exec into (see apps/shop-api/Dockerfile — wget is the
 # only HTTP client baked in, and there is no shell to pipe a heredoc through
 # for the PATCH body). auth is picked because every suite already assumes it
 # is up before this one runs (istio.sh, checkout.sh) — no new dependency.

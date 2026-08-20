@@ -22,7 +22,7 @@ run via `make test-preflight` when that question is the one being asked.
 
 | Requirement | Suite | Note |
 |---|---|---|
-| Unit behaviour | `make test-unit` | go test `apps/services` + `apps/notification` — saga order, non-fatal steps, cache-aside, handlers, gateways |
+| Unit behaviour | `make test-unit` | go test `apps/shop-api` + `apps/notification-api` — saga order, non-fatal steps, cache-aside, handlers, gateways |
 | Routing | `make test-routing` | each path reaches the service that owns it |
 | Route isolation | `make test-route-isolation` | console hosts answered by their own backends, never a storefront route |
 | Mesh CNI + netpol | `make test-mesh` | Cilium is the CNI; a pod with no rule is refused the database |
@@ -61,7 +61,7 @@ code-level tests can:
 
 | Run | Result |
 |---|---|
-| `go test ./...` — apps/services, apps/notification (2026-08-17) | all packages PASS, `-race` clean on notification |
+| `go test ./...` — apps/shop-api, apps/notification-api (2026-08-17) | all packages PASS, `-race` clean on notification |
 | cluster suites (2026-08-13) | see the previous run record in git history — needs `make up` first |
 
 The 2026-08-13 numbers predate the notification leg and the unit suite; run

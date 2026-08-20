@@ -180,10 +180,10 @@ GO_SVCS := auth catalog order payment
 ## images: build every image and load it into the cluster
 images:
 	@$(GITOPS_SCRIPTS)/check-image-tags.sh $(VERSION)
-	@docker build --build-arg VERSION=$(VERSION) -t notification:$(VERSION) $(API_REPO)/notification
+	@docker build --build-arg VERSION=$(VERSION) -t notification:$(VERSION) $(API_REPO)/notification-api
 	@for s in $(GO_SVCS); do \
 		docker build --build-arg SVC=$$s --build-arg VERSION=$(VERSION) \
-			-t $$s:$(VERSION) $(API_REPO)/services; \
+			-t $$s:$(VERSION) $(API_REPO)/shop-api; \
 	done
 	@docker build -t web-ui:$(VERSION) $(WEB_REPO)/web-ui
 	@kind load docker-image --name $(CLUSTER) \

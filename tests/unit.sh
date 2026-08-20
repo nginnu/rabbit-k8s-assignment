@@ -2,7 +2,7 @@
 #
 # Usecase: the Go modules' own unit tests pass on the host.
 #
-# Why this exists: apps/notification and apps/services carry Go unit tests the
+# Why this exists: apps/notification-api and apps/shop-api carry Go unit tests the
 # shell suites cannot see — routing/auth/checkout prove the deployed cluster,
 # not the code inside the pods. This is the cheapest suite (pure `go test`, no
 # cluster), so run-all.sh runs it first and fails fast before anything touches
@@ -34,10 +34,10 @@ go_unit() {
   fi
 }
 
-section "apps/notification"
-go_unit ../apps/notification
+section "apps/notification-api"
+go_unit ../apps/notification-api
 
-section "apps/services"
-go_unit ../apps/services
+section "apps/shop-api"
+go_unit ../apps/shop-api
 
 summary

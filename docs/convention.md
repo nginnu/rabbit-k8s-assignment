@@ -301,7 +301,7 @@ doesn't scale it:
 | Redis `replicas` | ClusterIP spreads connections across pods with nothing replicating between them | Sessions split — logged in on one request, logged out on the next |
 
 The ceiling that's actually reached first is connections, not CPU:
-`apps/services/internal/shared/db/mariadb.go:35` sets `SetMaxOpenConns(25)`
+`apps/shop-api/internal/shared/db/mariadb.go:35` sets `SetMaxOpenConns(25)`
 per pod. auth-svc, order-svc, payment-svc run 2 replicas each —
 150 possible connections against MariaDB's default `max_connections` of 151,
 which `local/data/mariadb.yaml` doesn't override.
@@ -311,7 +311,7 @@ which `local/data/mariadb.yaml` doesn't override.
 `MARIADB_DSN` (Secret `app-secrets`) and `REDIS_ADDR` (ConfigMap
 `app-config`, literal in `charts/apps/platform-config/values.yaml:24`) each
 name exactly one host. A read replica or a Redis Sentinel setup needs a
-second key plus a code change in `apps/services/internal/shared/db/` to pick
+second key plus a code change in `apps/shop-api/internal/shared/db/` to pick
 between them — swapping the manifest for a managed service doesn't remove
 this coupling, a Cloud SQL read replica still needs a second endpoint the
 service doesn't currently have anywhere to put.
