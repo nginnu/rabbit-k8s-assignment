@@ -1,8 +1,15 @@
 # Helm dependency output — `helm dependency update` vendors the library chart
 # and writes a lock. Both are reproducible from Chart.yaml, and committing the
 # vendored copy means the library exists twice with nothing keeping them equal.
-charts/*/*/charts/
-charts/*/*/Chart.lock
+#
+# Led by `**/` rather than by `repo-gitops/`: these two lines were anchored to
+# the old `charts/` at the repo root, and the day the tree moved they matched
+# nothing — seven vendored platform-service tarballs sat one `git add -A` away
+# from the history with git reporting them as ordinary untracked files. `**/`
+# also matches zero directories, so the same two lines keep working unchanged
+# from the root of repo-gitops once it is a git repo of its own.
+**/charts/*/charts/
+**/charts/*/Chart.lock
 
 # Assistant configuration — local working setup, not part of the deliverable.
 # These describe how this repository is worked on rather than what it does, and
@@ -22,6 +29,8 @@ WORKING-RULES.md
 # `kubeconfig` + `kubeconfig-*` pair missed `kubeconfig.yaml`, and `.env` +
 # `.env.*` missed `.envrc`. A credentials pattern that covers every name but
 # one is the same as not having it.
+# None of the four carries a slash, so all four match at any depth — the repo
+# split moved every other pattern in this file and left these four correct.
 *.pem
 *.key
 kubeconfig*
@@ -31,26 +40,27 @@ kubeconfig*
 # `next build`, so nothing here is worth a commit. Unignored, `node_modules/`
 # collapses to a single `??` line in `git status`, which is how tens of
 # thousands of files get in behind one `git add -A` without looking like much.
-# Not anchored to apps/web-ui: a second frontend would hit this the same way.
+# Not anchored to repo-webui/web-ui: a second frontend would hit this the same
+# way.
 node_modules/
 .next/
 .turbo/
 npm-debug.log*
 # `output: "export"` writes the static site to `out/` instead of `.next/`.
-# Anchored under apps/ so a real directory named `out` elsewhere in the repo
-# does not silently disappear from git.
-/apps/*/out/
+# Anchored under the frontend repo so a real directory named `out` elsewhere in
+# the tree does not silently disappear from git.
+/repo-webui/*/out/
 
 # Go binaries built on the host — `go build ./cmd/payment` without `-o` drops a
 # ~40 MB executable beside go.mod, named after the package. Every path is
 # spelled out because a bare `payment` would also match
-# `apps/services/cmd/payment/`, hiding the source the binary was built from.
+# `repo-api/services/cmd/payment/`, hiding the source the binary was built from.
 # A new service under cmd/ needs its name added here.
-/apps/services/auth
-/apps/services/catalog
-/apps/services/order
-/apps/services/payment
-/apps/notification/notification
+/repo-api/services/auth
+/repo-api/services/catalog
+/repo-api/services/order
+/repo-api/services/payment
+/repo-api/notification/notification
 # `go test -c` leaves a `<pkg>.test` binary; `-coverprofile` leaves the profile.
 *.test
 coverage.out

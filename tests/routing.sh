@@ -49,8 +49,9 @@ else
 fi
 
 section "the catch-all does not shadow the api"
-# / is a PathPrefix match and would swallow everything if the longest-prefix
-# rule were not applied. JSON on an API path is the evidence.
+# /api/* lands on the same catch-all as the pages now, answered by web-ui's
+# route handlers forwarding in-cluster. JSON on an API path is the evidence
+# the handler answered rather than the Next.js 404 page.
 if body GET /api/products | grep -q '^{\|^\['; then
   ok "/api/products returned JSON, not the UI page"
 else
@@ -58,7 +59,7 @@ else
 fi
 
 section "an unknown path is refused"
-# 404 from the gateway, because no route matches under /api.
+# 404 from web-ui itself: no route handler exists under /api for this path.
 expect "/api/nothing-here      " 404 "$(status GET /api/nothing-here)"
 
 summary

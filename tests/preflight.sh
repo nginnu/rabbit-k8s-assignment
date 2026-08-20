@@ -69,7 +69,7 @@ compare() {
 
 CLUSTER="${CLUSTER:-$(makevar CLUSTER)}"
 DATA_NS="${DATA_NS:-$(makevar DATA_NS)}"
-TRAEFIK_NS="${TRAEFIK_NS:-$(makevar TRAEFIK_NS)}"
+GATEWAY_NS="${GATEWAY_NS:-$(makevar GATEWAY_NS)}"
 APP_VERSION="${VERSION:-$(makevar VERSION)}"
 # The application namespace split in two: web-ui lives in `web`; the four Go
 # services, notification and platform-config live in `api`. Checks below that used to
@@ -126,7 +126,7 @@ for r in rs:
 # tag is read from the cluster directly — the same split the Makefile's own
 # check-version.sh call makes at install time.
 traefik_chart_declared=$(makevar TRAEFIK_VERSION)
-traefik_chart_actual=$(helm list -n "$TRAEFIK_NS" -o json 2>/dev/null | python3 -c "
+traefik_chart_actual=$(helm list -n "$GATEWAY_NS" -o json 2>/dev/null | python3 -c "
 import json,sys
 try: rs = json.load(sys.stdin)
 except Exception: rs = []
@@ -140,12 +140,12 @@ compare "traefik chart" "$traefik_chart_declared" "$traefik_chart_actual" \
 # The running image is checked separately from the Helm release: a release can
 # report one version while a cached image runs another.
 traefik_declared=$(makevar TRAEFIK_APP_VERSION)
-traefik_image=$($KUBECTL -n "$TRAEFIK_NS" get deploy traefik \
+traefik_image=$($KUBECTL -n "$GATEWAY_NS" get deploy traefik \
   -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null)
 if [ -n "$traefik_image" ]; then
   compare "traefik image tag" "$traefik_declared" "${traefik_image##*:}"
 else
-  bad "traefik deployment not found in $TRAEFIK_NS"
+  bad "traefik deployment not found in $GATEWAY_NS"
 fi
 
 compare "cert-manager" "$(makevar CERT_MANAGER_VERSION)" "$(helm_app_version cert-manager cert-manager)"
@@ -166,7 +166,7 @@ step "Gateway plumbing — host :80 to Traefik"
 # per-Gateway deployment, and nothing carries a gateway.networking.k8s.io
 # label — that label belongs to the Gateway object, not the pod that serves
 # it. The chart's own pod labels are the only handle here.
-gw_pod_ports=$($KUBECTL -n "$TRAEFIK_NS" get pod \
+gw_pod_ports=$($KUBECTL -n "$GATEWAY_NS" get pod \
   -l app.kubernetes.io/name=traefik \
   -o jsonpath='{.items[0].spec.containers[0].ports[*].hostPort}' 2>/dev/null)
 
@@ -176,7 +176,7 @@ else
   bad "Traefik has no hostPort 80 — the ports: block in values.yaml never reached the pod spec"
 fi
 
-gw_node=$($KUBECTL -n "$TRAEFIK_NS" get pod \
+gw_node=$($KUBECTL -n "$GATEWAY_NS" get pod \
   -l app.kubernetes.io/name=traefik \
   -o jsonpath='{.items[0].spec.nodeName}' 2>/dev/null)
 
@@ -204,7 +204,7 @@ if [ -n "$gw_node" ]; then
       note "hostPort binds a port on a node nothing forwards to the host" ;;
   esac
 else
-  bad "no Traefik pod found in $TRAEFIK_NS"
+  bad "no Traefik pod found in $GATEWAY_NS"
 fi
 
 labelled=$($KUBECTL get nodes -l ingress-ready=true -o name 2>/dev/null | wc -l | tr -d ' ')
@@ -222,7 +222,7 @@ fi
 
 step "Gateway API objects"
 
-prog=$($KUBECTL -n "$TRAEFIK_NS" get gateway platform \
+prog=$($KUBECTL -n "$GATEWAY_NS" get gateway external \
   -o jsonpath='{.status.conditions[?(@.type=="Programmed")].status}' 2>/dev/null)
 if [ "$prog" = "True" ]; then
   ok "gateway/platform is Programmed"
@@ -501,12 +501,12 @@ step "TLS"
 # has to live in the same namespace — a Secret left in a different one needs a
 # ReferenceGrant beside it, or the listener resolves no certificate and :443
 # falls back to Traefik's self-signed default.
-cert_ready=$($KUBECTL -n "$TRAEFIK_NS" get certificate platform-tls \
+cert_ready=$($KUBECTL -n "$GATEWAY_NS" get certificate gateway-tls \
   -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)
 if [ "$cert_ready" = "True" ]; then
-  ok "certificate platform-tls is issued"
+  ok "certificate gateway-tls is issued"
 else
-  bad "certificate platform-tls is not Ready (${cert_ready:-missing})"
+  bad "certificate gateway-tls is not Ready (${cert_ready:-missing})"
   note "make tls installs cert-manager and seeds the CA"
 fi
 
@@ -514,7 +514,7 @@ fi
 # not http/https. Asking for the old name returns an empty jsonpath match
 # rather than an error, and a check that reads empty as "not yet Programmed"
 # instead of "wrong listener name" sends you to the wrong fix.
-https_listener=$($KUBECTL -n "$TRAEFIK_NS" get gateway platform \
+https_listener=$($KUBECTL -n "$GATEWAY_NS" get gateway external \
   -o jsonpath='{.status.listeners[?(@.name=="websecure")].conditions[?(@.type=="Programmed")].status}' 2>/dev/null)
 if [ "$https_listener" = "True" ]; then
   ok "gateway serves the websecure listener"
