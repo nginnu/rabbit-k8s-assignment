@@ -19,8 +19,39 @@ env:
   TRIVY_VERSION: "0.74.0"
 
 jobs:
+  # gcp/ currently holds .gitkeep files and nothing else. Run without this and
+  # every job below reports green: `terraform validate` succeeds on an empty
+  # directory, and checkov exits 0 having scanned nothing and written no report.
+  # Three green checks that prove no Terraform was ever looked at is worse than
+  # no checks at all.
+  discover:
+    name: discover · terraform present
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      present: ${{ steps.find.outputs.present }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: find
+        run: |
+          count=$(find gcp -name '*.tf' -type f | wc -l)
+          if [ "$count" -gt 0 ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+            echo "### iac · $count .tf files found" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "### iac · skipped"
+              echo "\`gcp/\` contains no \`.tf\` files. terraform, checkov and trivy"
+              echo "did not run — nothing was scanned and nothing is claimed."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   terraform:
     name: terraform · fmt + validate
+    needs: discover
+    if: needs.discover.outputs.present == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -53,6 +84,8 @@ jobs:
 
   checkov:
     name: iac scan · checkov
+    needs: discover
+    if: needs.discover.outputs.present == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -74,8 +107,11 @@ jobs:
             --output sarif --output-file-path . \
             --compact --quiet
 
+      # checkov exits 0 and writes nothing when it finds no resources, so the
+      # upload has to ask whether the file exists rather than assume the step
+      # before it produced one.
       - uses: github/codeql-action/upload-sarif@v3
-        if: always()
+        if: always() && hashFiles('results.sarif') != ''
         with:
           sarif_file: results.sarif
           category: checkov
@@ -92,6 +128,8 @@ jobs:
   # `trivy config` is tfsec's scanning engine with the maintenance behind it.
   trivy-config:
     name: iac scan · trivy
+    needs: discover
+    if: needs.discover.outputs.present == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
