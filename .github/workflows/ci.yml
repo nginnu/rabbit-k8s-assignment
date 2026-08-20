@@ -152,6 +152,12 @@ jobs:
       # -ignore-missing-schemas keeps them from failing while every core object
       # is still checked. Without -strict a typo in a field name is accepted in
       # CI and dropped at admission.
+      #
+      # The two ignored patterns are not manifests: values.yaml is Helm input,
+      # and grafana/dashboard.json is a Grafana dashboard that the Makefile
+      # loads into a ConfigMap with --from-file. kubeconform reads .json as
+      # readily as .yaml and fails the run on a file that has no `kind` and was
+      # never meant to have one.
       - name: kubeconform
         run: |
           kubeconform \
@@ -159,6 +165,7 @@ jobs:
             -summary \
             -ignore-missing-schemas \
             -ignore-filename-pattern '.*values\.yaml' \
+            -ignore-filename-pattern '.*\.json' \
             -kubernetes-version 1.31.0 \
             k8s-local/
 
