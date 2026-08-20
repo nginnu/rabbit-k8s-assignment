@@ -5,8 +5,15 @@ networking:
   disableDefaultCNI: true
   kubeProxyMode: iptables
 
+# Every other component in this repo is pinned in the Makefile. Kubernetes was
+# not: with no `image:` the version comes from whatever the local kind binary
+# defaults to, so a fresh clone gets whichever release that machine's kind was
+# built against. The digest is pinned as well as the tag because kind moves its
+# node tags — v1.36.1 today and v1.36.1 next month can be different images.
+# https://kind.sigs.k8s.io/docs/user/configuration/#kubernetes-version
 nodes:
   - role: control-plane
+    image: kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5
     kubeadmConfigPatches:
       # Marks this node as the ingress host so the gateway can be pinned here,
       # where the port mappings below actually exist.
@@ -24,5 +31,7 @@ nodes:
         protocol: TCP
 
   - role: worker
+    image: kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5
   - role: worker
+    image: kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5
   

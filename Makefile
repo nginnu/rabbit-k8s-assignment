@@ -3,13 +3,13 @@ export PATH := /usr/local/bin:$(PATH)
 CLUSTER ?= rabbit-k8s-test
 VERSION ?= v0.1.0
 
-LOCAL      := repo-infra/local
-GITOPS     := repo-gitops
-CHARTS     := repo-gitops/charts
-API_REPO   := repo-api
-WEB_REPO   := repo-web
-GITOPS_SCRIPTS := ./repo-gitops/scripts
-SCRIPTS    := ./repo-infra/scripts
+LOCAL      := k8s-local
+SCRIPTS    := ./scripts
+GITOPS     ?= ../rabbit-gitops
+API_REPO   ?= ../rabbit-api
+WEB_REPO   ?= ../rabbit-web
+CHARTS         := $(GITOPS)/charts
+GITOPS_SCRIPTS := $(GITOPS)/scripts
 GATEWAY_NS := gateway
 
 .DEFAULT_GOAL := help
@@ -18,12 +18,41 @@ GATEWAY_NS := gateway
 help:
 	@grep -hE '^## ' $(MAKEFILE_LIST) | sed 's/## //' | awk -F: '{printf "  \033[36m%-16s\033[0m%s\n", $$1, $$2}'
 
+## preflight: fail before the cluster when a sibling repo is not cloned
+preflight:
+	@missing=0; \
+	for repo in \
+		"rabbit-api:API_REPO:$(API_REPO)" \
+		"rabbit-web:WEB_REPO:$(WEB_REPO)" \
+		"rabbit-gitops:GITOPS:$(GITOPS)"; do \
+		name="$${repo%%:*}"; rest="$${repo#*:}"; \
+		var="$${rest%%:*}"; path="$${rest#*:}"; \
+		[ -d "$$path" ] && continue; \
+		echo "$$name not found at $$path"; \
+		echo "    git clone https://github.com/nginnu/$$name.git"; \
+		echo "    or, if it is cloned elsewhere: make $(MAKECMDGOALS) $$var=<path>"; \
+		missing=1; \
+	done; \
+	[ "$$missing" -eq 0 ] || exit 1
+	@echo "preflight: rabbit-api, rabbit-web, rabbit-gitops present"
+
+# Read out of cluster.yaml rather than pinned again here: kind takes the node
+# image from that file, and a second copy of the number is a second place to
+# forget. Every other component in this Makefile pins its own version because
+# nothing else reads one from a file.
+K8S_VERSION := $(shell sed -n 's|.*kindest/node:\(v[0-9.]*\)@.*|\1|p' $(LOCAL)/cluster.yaml | head -1)
+
 ## cluster: create the kind cluster
-cluster:
+cluster: preflight
 	@kind get clusters | grep -qx $(CLUSTER) \
 		&& echo "cluster $(CLUSTER) already exists" \
 		|| kind create cluster --name $(CLUSTER) \
 			--config $(LOCAL)/cluster.yaml
+	@# A cluster created before the node image was pinned keeps running on
+	@# whatever version it was built with, and every check after this one
+	@# passes against the wrong Kubernetes.
+	@$(SCRIPTS)/check-version.sh kubernetes $(K8S_VERSION) \
+		"$$(kubectl get nodes -o jsonpath='{.items[0].status.nodeInfo.kubeletVersion}')"
 
 CILIUM_VERSION := 1.20.0
 
@@ -178,14 +207,14 @@ data: secrets sql
 GO_SVCS := auth catalog order payment
 
 ## images: build every image and load it into the cluster
-images:
+images: preflight
 	@$(GITOPS_SCRIPTS)/check-image-tags.sh $(VERSION)
 	@docker build --build-arg VERSION=$(VERSION) -t notification:$(VERSION) $(API_REPO)/notification-api
 	@for s in $(GO_SVCS); do \
 		docker build --build-arg SVC=$$s --build-arg VERSION=$(VERSION) \
 			-t $$s:$(VERSION) $(API_REPO)/shop-api; \
 	done
-	@docker build -t web-ui:$(VERSION) $(WEB_REPO)/web-ui
+	@docker build -t web-ui:$(VERSION) $(WEB_REPO)
 	@kind load docker-image --name $(CLUSTER) \
 		notification:$(VERSION) web-ui:$(VERSION) \
 		$(foreach s,$(GO_SVCS),$(s):$(VERSION))
@@ -311,4 +340,4 @@ up: cluster cilium namespaces gateway routes istio images
 down:
 	@kind delete cluster --name $(CLUSTER)
 
-.PHONY: help cluster cilium gateway-api networking traefik tls gateway routes namespaces istio secrets app-secrets sql data images apps observability kiali rollouts argocd verify up down
+.PHONY: help preflight cluster cilium gateway-api networking traefik tls gateway routes namespaces istio secrets app-secrets sql data images apps observability kiali rollouts argocd verify up down

@@ -158,6 +158,18 @@ jobs:
       # loads into a ConfigMap with --from-file. kubeconform reads .json as
       # readily as .yaml and fails the run on a file that has no `kind` and was
       # never meant to have one.
+      # Taken from the node image the cluster is actually built from, not
+      # written here. A hardcoded number drifts the moment cluster.yaml moves,
+      # and CI then checks manifests against a Kubernetes nobody runs — passing
+      # fields that admission drops and rejecting fields it accepts.
+      - name: read pinned kubernetes version
+        id: k8s
+        run: |
+          v=$(sed -n 's|.*kindest/node:v\([0-9.]*\)@.*|\1|p' k8s-local/cluster.yaml | head -1)
+          [ -n "$v" ] || { echo "::error::no kindest/node image pinned in k8s-local/cluster.yaml"; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "kubeconform will validate against Kubernetes $v"
+
       - name: kubeconform
         run: |
           kubeconform \
@@ -166,7 +178,7 @@ jobs:
             -ignore-missing-schemas \
             -ignore-filename-pattern '.*values\.yaml' \
             -ignore-filename-pattern '.*\.json' \
-            -kubernetes-version 1.31.0 \
+            -kubernetes-version ${{ steps.k8s.outputs.version }} \
             k8s-local/
 
   governance:
