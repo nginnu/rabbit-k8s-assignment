@@ -168,7 +168,7 @@ alloy:
         // a target that policy blocks is a scrape error every 15s, not a
         // metric.
         namespaces {
-          names = ["api"]
+          names = ["api", "web"]
         }
 
         // The injection webhook writes security.istio.io/tlsMode, so it marks

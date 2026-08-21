@@ -255,4 +255,64 @@ else
   done
 fi
 
+section "web-ui is in the mesh, so nothing reaches api unencrypted"
+
+WEB_NS="${WEB_NS:-web}"
+
+pods=$(kubectl -n "$WEB_NS" get pods -l app.kubernetes.io/name=web-ui \
+  -o jsonpath='{.items[*].metadata.name}' 2>/dev/null)
+
+if [ -z "$pods" ]; then
+  bad "no web-ui pod found in $WEB_NS"
+else
+  for pod in $pods; do
+    verdict=$(kubectl -n "$WEB_NS" get pod "$pod" -o json 2>/dev/null \
+      | json 'next((("ready" if c["ready"] else "not-ready") for c in (d["status"].get("containerStatuses") or []) + (d["status"].get("initContainerStatuses") or []) if c["name"] == "istio-proxy"), "absent")')
+    case "$verdict" in
+      ready)     ok "$pod — istio-proxy present and ready" ;;
+      not-ready) bad "$pod — istio-proxy not ready; first suspect is the NetworkPolicy egress to istiod:15012" ;;
+      absent)    bad "$pod — no istio-proxy; mesh: true is not in charts/web-ui/values.yaml, or Argo CD has not synced it" ;;
+      *)         bad "$pod — could not read pod status" ;;
+    esac
+  done
+
+  first=$(printf '%s\n' "$pods" | awk '{print $1}')
+  sa=$(kubectl -n "$WEB_NS" get pod "$first" -o jsonpath='{.spec.serviceAccountName}' 2>/dev/null)
+  expect "web-ui runs under its own ServiceAccount" "web-ui" "$sa"
+
+  # The reason web-ui is meshed at all: it is the only caller auth, catalog and
+  # order allow, so until its calls are mTLS those three cannot move to STRICT.
+  #
+  # A delta, not a presence check: istio_requests_total never resets, so the
+  # plaintext requests catalog served before web-ui was meshed stay in the
+  # counter for the life of the pod. Asserting that "none" is absent fails
+  # forever on a cluster that has already been fixed.
+  cat_pod=$(kubectl -n "$API_NS" get pod -l app.kubernetes.io/name=catalog \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+
+  plain_count() {
+    kubectl -n "$API_NS" exec "$cat_pod" -c istio-proxy -- \
+      pilot-agent request GET stats/prometheus 2>/dev/null \
+      | grep -E '^istio_requests_total.*reporter="destination".*connection_security_policy="none"' \
+      | sed -E 's/.*\} ([0-9.]+)$/\1/' \
+      | awk '{n += $1} END {printf "%d", n + 0}'
+  }
+
+  if [ -z "$cat_pod" ]; then
+    bad "no catalog pod — cannot tell whether web-ui still reaches it in plaintext"
+  else
+    before=$(plain_count)
+    for _ in 1 2 3 4 5; do
+      curl -sS -o /dev/null --max-time 15 "$BASE/api/products" 2>/dev/null
+    done
+    after=$(plain_count)
+
+    if [ "$after" = "$before" ]; then
+      ok "catalog served five storefront requests without one plaintext connection — none stayed at $before"
+    else
+      bad "catalog's plaintext counter rose $before -> $after — web-ui is still calling it unencrypted"
+    fi
+  fi
+fi
+
 summary

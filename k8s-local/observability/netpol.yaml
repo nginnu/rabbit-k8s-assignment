@@ -107,6 +107,12 @@ spec:
           podSelector:
             matchLabels:
               security.istio.io/tlsMode: istio
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: web
+          podSelector:
+            matchLabels:
+              security.istio.io/tlsMode: istio
       ports:
         - protocol: TCP
           port: 15020
