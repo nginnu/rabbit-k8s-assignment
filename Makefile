@@ -146,7 +146,7 @@ namespaces: cilium
 ISTIO_VERSION := 1.30.3
 
 ## istio: install the mesh control plane — it injects nothing until a namespace asks
-istio: cilium
+istio: cilium namespaces
 	@helm repo add istio https://istio-release.storage.googleapis.com/charts >/dev/null 2>&1 || true
 	@helm repo update istio >/dev/null
 	@helm upgrade --install istio-base istio/base \
@@ -327,6 +327,25 @@ verify:
 	@curl -sS -o /dev/null -w '  https://localhost/  -> HTTP %{http_code}  (%{ssl_verify_result} = verified)' --max-time 10 https://localhost/; echo
 	@curl -sS -o /dev/null -w '  /api/products       -> HTTP %{http_code}  (401 = auth is enforced)' --max-time 10 https://localhost/api/products; echo
 
+TEST_tls     := tls-proof.sh
+TEST_o11y    := o11y-stack.sh
+TEST_journey := o11y-journey.sh
+
+## test: every suite, cheapest first
+test:
+	@./tests/run-all.sh
+
+## test-NAME: one suite — unit preflight routing route-isolation internal-routes mesh istio auth checkout o11y journey tls resilience
+test-%:
+	@suite="$(or $(TEST_$*),$*.sh)"; \
+	if [ ! -f tests/$$suite ]; then \
+		echo "make test-$*: no suite at tests/$$suite"; \
+		echo "available:"; \
+		ls tests/*.sh | sed 's|tests/|  |'; \
+		exit 1; \
+	fi; \
+	./tests/$$suite
+
 ## up: everything, in order
 up: cluster cilium namespaces gateway routes istio images
 	@$(MAKE) -f $(firstword $(MAKEFILE_LIST)) --no-print-directory observability
@@ -340,4 +359,4 @@ up: cluster cilium namespaces gateway routes istio images
 down:
 	@kind delete cluster --name $(CLUSTER)
 
-.PHONY: help preflight cluster cilium gateway-api networking traefik tls gateway routes namespaces istio secrets app-secrets sql data images apps observability kiali rollouts argocd verify up down
+.PHONY: help preflight cluster cilium gateway-api networking traefik tls gateway routes namespaces istio secrets app-secrets sql data images apps observability kiali rollouts argocd verify test up down
