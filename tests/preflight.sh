@@ -405,15 +405,14 @@ done
 
 step "Data layer"
 
-for sts in mariadb; do
-  ready=$($KUBECTL -n "$DATA_NS" get statefulset "$sts" \
-    -o jsonpath='{.status.readyReplicas}' 2>/dev/null)
-  if [ "${ready:-0}" -ge 1 ]; then
-    ok "statefulset/$sts is ready"
-  else
-    bad "statefulset/$sts has ${ready:-0} ready replicas"
-  fi
-done
+sts=mariadb
+ready=$($KUBECTL -n "$DATA_NS" get statefulset "$sts" \
+  -o jsonpath='{.status.readyReplicas}' 2>/dev/null)
+if [ "${ready:-0}" -ge 1 ]; then
+  ok "statefulset/$sts is ready"
+else
+  bad "statefulset/$sts has ${ready:-0} ready replicas"
+fi
 
 pvc=$($KUBECTL -n "$DATA_NS" get pvc data-mariadb-0 \
   -o jsonpath='{.status.phase}' 2>/dev/null)
