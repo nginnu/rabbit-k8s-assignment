@@ -1,0 +1,19 @@
+# The API server cannot be reached through a NetworkPolicy ipBlock on this
+# cluster. Cilium gives 172.19.0.4/32 identity 1 — reserved:host plus
+# reserved:kube-apiserver — and a CIDR rule only ever matches identities Cilium
+# does not already know, so both 10.96.0.1/32 and 172.19.0.0/16 were ignored and
+# every watch failed with `dial tcp 10.96.0.1:443: i/o timeout`.
+#
+# This sits beside the default-deny NetworkPolicy rather than replacing it:
+# allows from both policy types are a union, and the OPA rule reads
+# NetworkPolicy.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-kube-apiserver
+  namespace: argocd
+spec:
+  endpointSelector: {}
+  egress:
+    - toEntities:
+        - kube-apiserver

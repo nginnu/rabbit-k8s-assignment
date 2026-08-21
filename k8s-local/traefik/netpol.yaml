@@ -72,12 +72,6 @@ spec:
     # Traefik watches Gateway and HTTPRoute objects. Cut this and every route
     # stops updating, while the pod stays Running and the last-known config
     # keeps serving — the failure appears as a route that never takes effect.
-    - to:
-        - ipBlock:
-            cidr: 172.19.0.0/16
-      ports:
-        - protocol: TCP
-          port: 6443
     # Every namespace this gateway has an HTTPRoute into.
     - to:
         - namespaceSelector:
