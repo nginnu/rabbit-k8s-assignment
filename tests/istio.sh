@@ -142,4 +142,43 @@ else
   bad "destinationrule/east-west-mtls missing or not ISTIO_MUTUAL — run 'make istio', which applies the manifest"
 fi
 
+section "each service carries its own mesh identity"
+
+seen=""
+for svc in auth catalog order payment notification; do
+  sa=$(kubectl -n "$API_NS" get pod -l app.kubernetes.io/name="$svc" \
+    -o jsonpath='{.items[0].spec.serviceAccountName}' 2>/dev/null)
+  case "$sa" in
+    "")
+      bad "$svc — no pod, or no serviceAccountName on it" ;;
+    default)
+      bad "$svc — runs as sa/default; its certificate is spiffe://cluster.local/ns/$API_NS/sa/default, shared with every sibling, so no AuthorizationPolicy can name it" ;;
+    *)
+      case " $seen " in
+        *" $sa "*)
+          bad "$svc — shares serviceAccount $sa with another service; two workloads, one identity" ;;
+        *)
+          ok "$svc — sa/$sa"
+          seen="$seen $sa" ;;
+      esac ;;
+  esac
+done
+
+pod=$(kubectl -n "$API_NS" get pod -l app.kubernetes.io/name=payment \
+  -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+if [ -z "$pod" ]; then
+  bad "no payment pod — cannot read the certificate the sidecar was issued"
+else
+  uri=$(kubectl -n "$API_NS" exec "$pod" -c istio-proxy -- \
+    pilot-agent request GET certs 2>/dev/null | grep -om1 'spiffe://[^"]*')
+  case "$uri" in
+    "")
+      bad "payment — could not read a SPIFFE id from the sidecar certificate" ;;
+    */sa/payment)
+      ok "payment sidecar certificate is $uri" ;;
+    *)
+      bad "payment sidecar certificate is $uri — expected .../sa/payment; the pod predates the ServiceAccount change and has not rolled" ;;
+  esac
+fi
+
 summary
