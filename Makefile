@@ -100,6 +100,14 @@ traefik: networking
 	@$(SCRIPTS)/check-version.sh traefik $(TRAEFIK_APP_VERSION) \
 		"$$(kubectl -n $(GATEWAY_NS) get deploy traefik \
 			-o jsonpath='{.spec.template.spec.containers[0].image}' | sed 's/.*://')"
+	@# Applied with the release, not after it. The default-deny in this file
+	@# isolates everything in the namespace, and the traefik policy beside it is
+	@# what puts 80/443 back — a gap between the two takes the ingress offline.
+	@kubectl apply -f $(LOCAL)/traefik/netpol.yaml
+	@# ipBlock cannot select the API server: Cilium gives it a reserved identity
+	@# that CIDR rules never match, and traefik stops seeing HTTPRoute changes
+	@# while still serving its last config.
+	@kubectl apply -f $(LOCAL)/traefik/cnp-apiserver.yaml
 
 CERT_MANAGER_VERSION := v1.21.1
 
@@ -313,6 +321,10 @@ argocd: namespaces
 		"$$(kubectl -n argocd get deploy argocd-server \
 			-o jsonpath='{.spec.template.spec.containers[0].image}' | sed 's/.*://')"
 	@kubectl apply -f $(LOCAL)/argocd/route.yaml
+	@kubectl apply -f $(LOCAL)/argocd/netpol.yaml
+	@# Without this the controllers cannot reach the API server and ArgoCD stops
+	@# reconciling while every Application still reads Synced.
+	@kubectl apply -f $(LOCAL)/argocd/cnp-apiserver.yaml
 
 ## verify: prove the stack is actually working, not merely present
 verify:
