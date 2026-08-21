@@ -1,0 +1,93 @@
+# Default-deny over the argocd namespace, with the egress allow that has to come
+# with it. The chart ships four Ingress-only policies and nothing for egress, so
+# applying the deny alone stops the repo server reaching git and the controllers
+# reaching the API server — ArgoCD stays Running and quietly syncs nothing.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: argocd
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-egress
+  namespace: argocd
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+---
+# The chart's own policies cover ingress for four of the five workloads and each
+# allows every peer. applicationset-controller ships with none, so the deny
+# above is the first thing to isolate it — this puts back the one path that has
+# a caller.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-metrics-scrape
+  namespace: argocd
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: alloy
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-egress
+  namespace: argocd
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # The API server. Every controller here watches it, and the ApplicationSet
+    # controller writes Application objects through it.
+    - to:
+        - ipBlock:
+            cidr: 172.19.0.0/16
+      ports:
+        - protocol: TCP
+          port: 6443
+    # Between argocd's own pods: server and controllers to redis, and to the
+    # repo server that renders the charts.
+    - to:
+        - podSelector: {}
+    # github.com, over TLS only. The repo server clones the gitops repo and the
+    # ApplicationSet git generator polls it; without this every sync fails on a
+    # timeout that reads as a repository problem.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 443
