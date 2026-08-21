@@ -181,4 +181,78 @@ else
   esac
 fi
 
+section "payment and notification refuse plaintext"
+
+for pair in payment:7000 notification:8080; do
+  svc="${pair%%:*}"
+  port="${pair#*:}"
+
+  mode=$(kubectl -n "$API_NS" get peerauthentication "$svc" \
+    -o jsonpath='{.spec.mtls.mode}' 2>/dev/null)
+  if [ "$mode" = "STRICT" ]; then
+    ok "peerauthentication/$svc is STRICT"
+  else
+    bad "peerauthentication/$svc missing or not STRICT — run 'make istio', which applies the manifest"
+  fi
+
+  pod=$(kubectl -n "$API_NS" get pod -l app.kubernetes.io/name="$svc" \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+  if [ -z "$pod" ]; then
+    bad "$svc — no pod to read the inbound listener from"
+    continue
+  fi
+
+  plain=$(kubectl -n "$API_NS" exec "$pod" -c istio-proxy -- \
+    pilot-agent request GET config_dump 2>/dev/null \
+    | PORT="$port" json '
+sum(1
+    for c in d["configs"] if c["@type"].endswith("ListenersConfigDump")
+    for l in c.get("dynamic_listeners", [])
+    for fc in l.get("active_state", {}).get("listener", {}).get("filter_chains", [])
+    if fc.get("filter_chain_match", {}).get("destination_port") == int(__import__("os").environ["PORT"])
+    and fc.get("filter_chain_match", {}).get("transport_protocol") == "raw_buffer")')
+
+  case "$plain" in
+    0) ok "$svc :$port has no raw_buffer filter chain — a plaintext connection is rejected by the proxy" ;;
+    "") bad "$svc — could not read the inbound listener config" ;;
+    *)  bad "$svc :$port still has $plain raw_buffer filter chain(s) — the proxy accepts plaintext, STRICT has not taken effect" ;;
+  esac
+done
+
+section "a plaintext connection on the wire is actually refused"
+
+sender=$(kubectl -n "$API_NS" get pod -l app.kubernetes.io/name=order \
+  -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+
+if [ -z "$sender" ]; then
+  bad "no order pod — nothing that NetworkPolicy lets reach payment"
+else
+  for pair in payment:7000 notification:8080; do
+    svc="${pair%%:*}"
+    port="${pair#*:}"
+
+    ip=$(kubectl -n "$API_NS" get pod -l app.kubernetes.io/name="$svc" \
+      -o jsonpath='{.items[0].status.podIP}' 2>/dev/null)
+    if [ -z "$ip" ]; then
+      bad "$svc — no pod IP to connect to"
+      continue
+    fi
+
+    kubectl -n "$API_NS" exec "$sender" -c istio-proxy -- \
+      curl -sS -o /dev/null --max-time 8 "http://$ip:$port/healthz" >/dev/null 2>&1
+    rc=$?
+
+    case "$rc" in
+      56|52|35)
+        ok "$svc :$port reset the plaintext connection (curl $rc) — STRICT is enforced on the wire" ;;
+      0)
+        bad "$svc :$port answered a plaintext request — STRICT is declared but not enforced" ;;
+      28)
+        bad "$svc :$port timed out — the packet never arrived, so this proves NetworkPolicy, not STRICT" ;;
+      *)
+        bad "$svc :$port — curl exited $rc, cannot tell whether the proxy refused" ;;
+    esac
+  done
+fi
+
 summary

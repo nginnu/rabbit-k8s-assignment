@@ -1,0 +1,23 @@
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: payment
+  namespace: api
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: payment
+  mtls:
+    mode: STRICT
+---
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: notification
+  namespace: api
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: notification
+  mtls:
+    mode: STRICT

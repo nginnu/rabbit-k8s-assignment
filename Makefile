@@ -160,6 +160,7 @@ istio: cilium namespaces
 		"$$(kubectl -n istio-system get deploy istiod \
 			-o jsonpath='{.spec.template.spec.containers[0].image}' | sed 's/.*://')"
 	@kubectl apply -f $(LOCAL)/istio/destination-rule.yaml
+	@kubectl apply -f $(LOCAL)/istio/peer-authentication.yaml
 
 ## routes: attach every platform route to the Gateway
 routes: gateway
