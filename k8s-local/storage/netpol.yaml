@@ -21,6 +21,31 @@
 # set exactly that on the pod template — so both sides agree. If either side is
 # edited, both move together or the traffic is dropped with nothing in the
 # object to look at.
+# Default-deny over the whole namespace. The three policies below already cover
+# every pod that exists here, so this changes nothing for them — policies on one
+# pod are a union of their allows. What it covers is the pod that does not exist
+# yet: anything added to this namespace with no policy of its own is unisolated
+# by Kubernetes default, which is how a debug pod ends up able to reach 3306.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: data
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-egress
+  namespace: data
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
