@@ -78,4 +78,4 @@ spec:
             matchExpressions:
               - key: kubernetes.io/metadata.name
                 operator: In
-                values: [web, api, argocd, observability, kube-system]
+                values: [web, api, argocd, observability, argo-rollouts, kube-system]
