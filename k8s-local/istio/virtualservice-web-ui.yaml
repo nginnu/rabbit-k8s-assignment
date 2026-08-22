@@ -7,8 +7,19 @@ spec:
   hosts:
     - web-ui.web.svc.cluster.local
   http:
-    - route:
+    # Named because the Rollout's trafficRouting.istio.virtualServices[].routes
+    # references the route by name: the controller needs exactly this route to
+    # hold the stable/canary pair, and it rewrites the two weights on every
+    # step. 100/0 is the pre-rollout state it starts from.
+    - name: primary
+      route:
         - destination:
             host: web-ui
             port:
               number: 80
+          weight: 100
+        - destination:
+            host: web-ui-canary
+            port:
+              number: 80
+          weight: 0
