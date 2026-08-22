@@ -170,6 +170,14 @@ istio: cilium namespaces
 	@kubectl apply -f $(LOCAL)/istio/destination-rule.yaml
 	@kubectl apply -f $(LOCAL)/istio/peer-authentication.yaml
 
+istio-gateway: istio
+	@helm upgrade --install istio-ingressgateway istio/gateway \
+		-n istio-system --version $(ISTIO_VERSION) \
+		-f $(LOCAL)/istio/gateway-values.yaml \
+		--wait --timeout 5m
+	@kubectl apply -f $(LOCAL)/istio/gateway.yaml
+	@kubectl apply -f $(LOCAL)/istio/referencegrant.yaml
+
 ## routes: attach every platform route to the Gateway
 routes: gateway
 	@kubectl apply -f $(LOCAL)/traefik/route.yaml

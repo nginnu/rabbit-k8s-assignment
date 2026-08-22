@@ -79,3 +79,13 @@ spec:
               - key: kubernetes.io/metadata.name
                 operator: In
                 values: [web, api, argocd, observability, argo-rollouts, kube-system]
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: istio-ingressgateway
+      ports:
+        - protocol: TCP
+          port: 80
