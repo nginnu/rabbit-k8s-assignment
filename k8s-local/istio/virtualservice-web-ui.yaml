@@ -1,0 +1,14 @@
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: web-ui
+  namespace: web
+spec:
+  hosts:
+    - web-ui.web.svc.cluster.local
+  http:
+    - route:
+        - destination:
+            host: web-ui
+            port:
+              number: 80
