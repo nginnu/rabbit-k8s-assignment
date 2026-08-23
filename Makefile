@@ -36,10 +36,6 @@ preflight:
 	[ "$$missing" -eq 0 ] || exit 1
 	@echo "preflight: rabbit-api, rabbit-web, rabbit-gitops present"
 
-# Read out of cluster.yaml rather than pinned again here: kind takes the node
-# image from that file, and a second copy of the number is a second place to
-# forget. Every other component in this Makefile pins its own version because
-# nothing else reads one from a file.
 K8S_VERSION := $(shell sed -n 's|.*kindest/node:\(v[0-9.]*\)@.*|\1|p' $(LOCAL)/cluster.yaml | head -1)
 
 ## cluster: create the kind cluster
@@ -48,9 +44,6 @@ cluster: preflight
 		&& echo "cluster $(CLUSTER) already exists" \
 		|| kind create cluster --name $(CLUSTER) \
 			--config $(LOCAL)/cluster.yaml
-	@# A cluster created before the node image was pinned keeps running on
-	@# whatever version it was built with, and every check after this one
-	@# passes against the wrong Kubernetes.
 	@$(SCRIPTS)/check-version.sh kubernetes $(K8S_VERSION) \
 		"$$(kubectl get nodes -o jsonpath='{.items[0].status.nodeInfo.kubeletVersion}')"
 
@@ -100,13 +93,7 @@ traefik: networking
 	@$(SCRIPTS)/check-version.sh traefik $(TRAEFIK_APP_VERSION) \
 		"$$(kubectl -n $(GATEWAY_NS) get deploy traefik \
 			-o jsonpath='{.spec.template.spec.containers[0].image}' | sed 's/.*://')"
-	@# Applied with the release, not after it. The default-deny in this file
-	@# isolates everything in the namespace, and the traefik policy beside it is
-	@# what puts 80/443 back — a gap between the two takes the ingress offline.
 	@kubectl apply -f $(LOCAL)/traefik/netpol.yaml
-	@# ipBlock cannot select the API server: Cilium gives it a reserved identity
-	@# that CIDR rules never match, and traefik stops seeing HTTPRoute changes
-	@# while still serving its last config.
 	@kubectl apply -f $(LOCAL)/traefik/cnp-apiserver.yaml
 
 CERT_MANAGER_VERSION := v1.21.1
@@ -127,6 +114,7 @@ tls: traefik
 ## gateway: create the Gateway and wait for Traefik to program it
 gateway: tls
 	@kubectl apply -f $(LOCAL)/networking/gateway.yaml
+	@kubectl apply -f $(LOCAL)/networking/redirect-http.yaml
 	@kubectl -n $(GATEWAY_NS) wait --for=condition=Programmed --timeout=180s \
 		gateway/external
 
@@ -330,8 +318,6 @@ argocd: namespaces
 			-o jsonpath='{.spec.template.spec.containers[0].image}' | sed 's/.*://')"
 	@kubectl apply -f $(LOCAL)/argocd/route.yaml
 	@kubectl apply -f $(LOCAL)/argocd/netpol.yaml
-	@# Without this the controllers cannot reach the API server and ArgoCD stops
-	@# reconciling while every Application still reads Synced.
 	@kubectl apply -f $(LOCAL)/argocd/cnp-apiserver.yaml
 
 ## verify: prove the stack is actually working, not merely present
