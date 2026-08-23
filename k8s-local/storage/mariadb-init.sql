@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS `users` (
   `id`            INT           NOT NULL AUTO_INCREMENT,
   `username`      VARCHAR(64)   NOT NULL,
   `password_hash` VARCHAR(255)  NOT NULL COMMENT 'bcrypt',
+  `role`          ENUM('admin','qa','member') NOT NULL DEFAULT 'member',
   `created_at`    TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_users_username` (`username`)
@@ -88,6 +89,9 @@ CREATE TABLE IF NOT EXISTS `payments` (
 ALTER TABLE `payments`
   ADD COLUMN IF NOT EXISTS `method` ENUM('card','truemoney','gwallet','cod') NOT NULL DEFAULT 'card' AFTER `amount`;
 
+ALTER TABLE `users`
+  ADD COLUMN IF NOT EXISTS `role` ENUM('admin','qa','member') NOT NULL DEFAULT 'member' AFTER `password_hash`;
+
 -- =============================================================================
 -- Seed Data
 -- =============================================================================
@@ -98,13 +102,28 @@ ALTER TABLE `payments`
 --   regen:  cd services && go run ./cmd/bcrypt-tool gen password
 --   verify: cd services && go run ./cmd/bcrypt-tool verify password '<hash>'
 -- -----------------------------------------------------------------------------
-INSERT IGNORE INTO `users` (`username`, `password_hash`) VALUES
-  ('alice', '$2a$10$6hJG3tfyDT2DExeZLYMo6OF5kJXoJX7SJin1ZkWmygrYejx7iO/DO'),
-  ('bob',   '$2a$10$6hJG3tfyDT2DExeZLYMo6OF5kJXoJX7SJin1ZkWmygrYejx7iO/DO'),
-  ('hana',  '$2a$10$6hJG3tfyDT2DExeZLYMo6OF5kJXoJX7SJin1ZkWmygrYejx7iO/DO'),
-  ('felix', '$2a$10$6hJG3tfyDT2DExeZLYMo6OF5kJXoJX7SJin1ZkWmygrYejx7iO/DO'),
-  ('sara',  '$2a$10$6hJG3tfyDT2DExeZLYMo6OF5kJXoJX7SJin1ZkWmygrYejx7iO/DO'),
-  ('lily',  '$2a$10$6hJG3tfyDT2DExeZLYMo6OF5kJXoJX7SJin1ZkWmygrYejx7iO/DO');
+INSERT IGNORE INTO `users` (`username`, `password_hash`, `role`) VALUES
+  ('alice', '$2a$10$6hJG3tfyDT2DExeZLYMo6OF5kJXoJX7SJin1ZkWmygrYejx7iO/DO', 'admin'),
+  ('bob',   '$2a$10$6hJG3tfyDT2DExeZLYMo6OF5kJXoJX7SJin1ZkWmygrYejx7iO/DO', 'admin'),
+  ('hana',  '$2a$10$6hJG3tfyDT2DExeZLYMo6OF5kJXoJX7SJin1ZkWmygrYejx7iO/DO', 'admin'),
+  ('felix', '$2a$10$6hJG3tfyDT2DExeZLYMo6OF5kJXoJX7SJin1ZkWmygrYejx7iO/DO', 'admin'),
+  ('sara',  '$2a$10$6hJG3tfyDT2DExeZLYMo6OF5kJXoJX7SJin1ZkWmygrYejx7iO/DO', 'admin'),
+  ('lily',  '$2a$10$6hJG3tfyDT2DExeZLYMo6OF5kJXoJX7SJin1ZkWmygrYejx7iO/DO', 'admin');
+
+UPDATE `users`
+   SET `role` = 'admin'
+ WHERE `username` IN ('alice', 'bob', 'hana', 'felix', 'sara', 'lily');
+
+INSERT IGNORE INTO `users` (`username`, `password_hash`, `role`)
+WITH RECURSIVE seq AS (
+  SELECT 1 AS n
+  UNION ALL
+  SELECT n + 1 FROM seq WHERE n < 100
+)
+SELECT CONCAT('user_', LPAD(n, 3, '0')),
+       '$2a$10$6hJG3tfyDT2DExeZLYMo6OF5kJXoJX7SJin1ZkWmygrYejx7iO/DO',
+       IF(n <= 20, 'qa', 'member')
+  FROM seq;
 
 -- -----------------------------------------------------------------------------
 -- products — Premier League jerseys 2024/25
