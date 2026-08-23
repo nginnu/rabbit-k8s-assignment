@@ -6,13 +6,13 @@ metadata:
 spec:
   gatewayClassName: external
   listeners:
-    - name: web
+    - name: http
       port: 8000
       protocol: HTTP
       allowedRoutes:
         namespaces:
           from: All
-    - name: websecure
+    - name: https
       port: 8443
       protocol: HTTPS
       allowedRoutes:

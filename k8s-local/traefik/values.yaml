@@ -31,10 +31,23 @@ api:
   insecure: true
 
 ports:
-  web:
+  web: null
+  websecure: null
+  http:
+    port: 8000
+    exposedPort: 80
     hostPort: 80
-  websecure:
+    expose:
+      default: true
+  https:
+    port: 8443
+    exposedPort: 443
     hostPort: 443
+    expose:
+      default: true
+    http:
+      tls:
+        enabled: true
   traefik:
     expose:
       default: true

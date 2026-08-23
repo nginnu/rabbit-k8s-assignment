@@ -1,6 +1,3 @@
-# A dedicated hostname, not a path under the storefront: the console serves its
-# UI and its own /api from /, which under localhost would collide with the
-# web-ui and api routes.
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
@@ -12,6 +9,7 @@ spec:
   parentRefs:
     - name: external
       namespace: gateway
+      sectionName: https
   rules:
     - matches:
         - path: { type: PathPrefix, value: / }
