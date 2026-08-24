@@ -52,8 +52,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (service_name) (rate(http_server_request_duration_seconds_count{service_name=~\"$service\"}[1m]))",
-          "legendFormat": "{{service_name}}",
+          "expr": "sum by (service) (rate(http_server_request_duration_seconds_count{service=~\"$service\"}[1m]))",
+          "legendFormat": "{{service}}-api",
           "exemplar": true
         }
       ]
@@ -88,8 +88,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (service_name) (rate(http_server_request_duration_seconds_count{service_name=~\"$service\", http_response_status_code=~\"5..\"}[1m])) / sum by (service_name) (rate(http_server_request_duration_seconds_count{service_name=~\"$service\"}[1m])) or sum by (service_name) (rate(http_server_request_duration_seconds_count{service_name=~\"$service\"}[1m])) * 0",
-          "legendFormat": "{{service_name}}"
+          "expr": "sum by (service) (rate(http_server_request_duration_seconds_count{service=~\"$service\", http_response_status_code=~\"5..\"}[1m])) / sum by (service) (rate(http_server_request_duration_seconds_count{service=~\"$service\"}[1m])) or sum by (service) (rate(http_server_request_duration_seconds_count{service=~\"$service\"}[1m])) * 0",
+          "legendFormat": "{{service}}-api"
         }
       ]
     },
@@ -121,8 +121,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "histogram_quantile(0.99, sum by (service_name, le) (rate(http_server_request_duration_seconds_bucket{service_name=~\"$service\"}[5m])))",
-          "legendFormat": "{{service_name}} p99",
+          "expr": "histogram_quantile(0.99, sum by (service, le) (rate(http_server_request_duration_seconds_bucket{service=~\"$service\"}[5m])))",
+          "legendFormat": "{{service}}-api p99",
           "exemplar": true
         }
       ]
@@ -153,8 +153,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (service_name) (rate(http_server_request_duration_seconds_count{service_name=~\"$service\"}[1m]))",
-          "legendFormat": "{{service_name}}",
+          "expr": "sum by (service) (rate(http_server_request_duration_seconds_count{service=~\"$service\"}[1m]))",
+          "legendFormat": "{{service}}-api",
           "exemplar": true
         }
       ]
@@ -191,8 +191,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (service_name) (rate(http_server_request_duration_seconds_count{service_name=~\"$service\", http_response_status_code=~\"5..\"}[1m])) / sum by (service_name) (rate(http_server_request_duration_seconds_count{service_name=~\"$service\"}[1m]))",
-          "legendFormat": "{{service_name}}"
+          "expr": "sum by (service) (rate(http_server_request_duration_seconds_count{service=~\"$service\", http_response_status_code=~\"5..\"}[1m])) / sum by (service) (rate(http_server_request_duration_seconds_count{service=~\"$service\"}[1m]))",
+          "legendFormat": "{{service}}-api"
         }
       ]
     },
@@ -229,14 +229,14 @@
       "targets": [
         {
           "refId": "p99",
-          "expr": "histogram_quantile(0.99, sum by (service_name, le) (rate(http_server_request_duration_seconds_bucket{service_name=~\"$service\"}[5m])))",
-          "legendFormat": "{{service_name}} p99",
+          "expr": "histogram_quantile(0.99, sum by (service, le) (rate(http_server_request_duration_seconds_bucket{service=~\"$service\"}[5m])))",
+          "legendFormat": "{{service}}-api p99",
           "exemplar": true
         },
         {
           "refId": "p50",
-          "expr": "histogram_quantile(0.50, sum by (service_name, le) (rate(http_server_request_duration_seconds_bucket{service_name=~\"$service\"}[5m])))",
-          "legendFormat": "{{service_name}} p50"
+          "expr": "histogram_quantile(0.50, sum by (service, le) (rate(http_server_request_duration_seconds_bucket{service=~\"$service\"}[5m])))",
+          "legendFormat": "{{service}}-api p50"
         }
       ]
     },
@@ -266,8 +266,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "histogram_quantile(0.99, sum by (service_name, le) (rate(http_client_request_duration_seconds_bucket{service_name=~\"$service\"}[5m])))",
-          "legendFormat": "{{service_name}} p99"
+          "expr": "histogram_quantile(0.99, sum by (service, le) (rate(http_client_request_duration_seconds_bucket{service=~\"$service\"}[5m])))",
+          "legendFormat": "{{service}}-api p99"
         }
       ]
     },
@@ -301,8 +301,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "go_sql_connections_in_use{service_name=~\"$service\"}",
-          "legendFormat": "{{service_name}} in_use"
+          "expr": "go_sql_connections_in_use{service=~\"$service\"}",
+          "legendFormat": "{{service}}-api in_use"
         }
       ]
     },
@@ -330,13 +330,13 @@
       "targets": [
         {
           "refId": "open",
-          "expr": "go_sql_connections_open{service_name=~\"$service\"}",
-          "legendFormat": "{{service_name}} open"
+          "expr": "go_sql_connections_open{service=~\"$service\"}",
+          "legendFormat": "{{service}}-api open"
         },
         {
           "refId": "max",
-          "expr": "go_sql_connections_max_open{service_name=~\"$service\"}",
-          "legendFormat": "{{service_name}} max"
+          "expr": "go_sql_connections_max_open{service=~\"$service\"}",
+          "legendFormat": "{{service}}-api max"
         }
       ]
     },
@@ -371,8 +371,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "rate(go_sql_connections_wait_count_total{service_name=~\"$service\"}[1m])",
-          "legendFormat": "{{service_name}} waits/s"
+          "expr": "rate(go_sql_connections_wait_count_total{service=~\"$service\"}[1m])",
+          "legendFormat": "{{service}}-api waits/s"
         }
       ]
     },
@@ -401,8 +401,8 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "db_client_connections_usage{service_name=~\"$service\", state=\"used\"}",
-          "legendFormat": "{{service_name}} used"
+          "expr": "db_client_connections_usage{service=~\"$service\", state=\"used\"}",
+          "legendFormat": "{{service}}-api used"
         }
       ]
     },
@@ -425,13 +425,13 @@
       "targets": [
         {
           "refId": "hits",
-          "expr": "rate(db_client_connections_hits{service_name=~\"$service\"}[1m])",
-          "legendFormat": "{{service_name}} hits/s"
+          "expr": "rate(db_client_connections_hits{service=~\"$service\"}[1m])",
+          "legendFormat": "{{service}}-api hits/s"
         },
         {
           "refId": "misses",
-          "expr": "rate(db_client_connections_misses{service_name=~\"$service\"}[1m])",
-          "legendFormat": "{{service_name}} misses/s"
+          "expr": "rate(db_client_connections_misses{service=~\"$service\"}[1m])",
+          "legendFormat": "{{service}}-api misses/s"
         }
       ]
     },
@@ -455,13 +455,13 @@
       "targets": [
         {
           "refId": "timeouts",
-          "expr": "rate(db_client_connections_timeouts{service_name=~\"$service\"}[1m])",
-          "legendFormat": "{{service_name}} timeouts/s"
+          "expr": "rate(db_client_connections_timeouts{service=~\"$service\"}[1m])",
+          "legendFormat": "{{service}}-api timeouts/s"
         },
         {
           "refId": "waits",
-          "expr": "rate(db_client_connections_waits{service_name=~\"$service\"}[1m])",
-          "legendFormat": "{{service_name}} waits/s"
+          "expr": "rate(db_client_connections_waits{service=~\"$service\"}[1m])",
+          "legendFormat": "{{service}}-api waits/s"
         }
       ]
     },
@@ -472,11 +472,37 @@
       "collapsed": false
     },
     {
+      "title": "Orders Created",
+      "description": "order.created — counted after the insert lands, so an order the DB rejected never appears here.",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 4, "x": 0, "y": 42 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "0",
+          "color": { "mode": "fixed", "fixedColor": "text" }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "none",
+        "graphMode": "area"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(order_created_total{service=~\"$service\"})",
+          "legendFormat": "orders"
+        }
+      ]
+    },
+    {
       "title": "Payment Success Rate",
       "description": "paid / all attempts since the pods started. 100% when no cod was sent; every cod checkout pulls it down.",
       "type": "stat",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 42 },
+      "gridPos": { "h": 8, "w": 4, "x": 4, "y": 42 },
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
@@ -494,17 +520,17 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(payment_requests_total{payment_status=\"paid\", service_name=~\"$service\"}) / sum(payment_requests_total{service_name=~\"$service\"})",
+          "expr": "sum(payment_requests_total{payment_status=\"paid\", service=~\"$service\"}) / sum(payment_requests_total{service=~\"$service\"})",
           "legendFormat": "success rate"
         }
       ]
     },
     {
-      "title": "Payment Success Rate Over Time (2m window)",
-      "description": "The same expression the order canary AnalysisTemplate evaluates. The dashed line is the rollback threshold: below it the canary aborts. 0.85 sits under the ~0.90 baseline a 10% cod traffic mix produces.",
+      "title": "Payment Success Rate Over Time",
+      "description": "The dashed line is the rollback threshold: below it the canary aborts. 0.85 sits under the ~0.90 baseline a 10% cod traffic mix produces. The window follows the time picker via $__rate_interval; the AnalysisTemplate evaluates the same ratio over a fixed 2m, so the two read alike only at short ranges.",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 6, "y": 42 },
+      "gridPos": { "h": 8, "w": 10, "x": 8, "y": 42 },
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
@@ -529,7 +555,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(rate(payment_requests_total{payment_status=\"paid\", service_name=~\"$service\"}[2m])) / sum(rate(payment_requests_total{service_name=~\"$service\"}[2m]))",
+          "expr": "sum(rate(payment_requests_total{payment_status=\"paid\", service=~\"$service\"}[$__rate_interval])) / sum(rate(payment_requests_total{service=~\"$service\"}[$__rate_interval]))",
           "legendFormat": "success rate"
         }
       ]
@@ -567,9 +593,9 @@
       },
       "options": { "showHeader": true },
       "targets": [
-        { "refId": "A", "expr": "sum by (payment_method) (payment_requests_total{payment_status=\"paid\", service_name=~\"$service\"})", "format": "table", "instant": true },
-        { "refId": "B", "expr": "sum by (payment_method) (payment_requests_total{payment_status=\"failed\", service_name=~\"$service\"})", "format": "table", "instant": true },
-        { "refId": "C", "expr": "sum by (payment_method) (payment_requests_total{payment_status=\"paid\", service_name=~\"$service\"}) / sum by (payment_method) (payment_requests_total{service_name=~\"$service\"})", "format": "table", "instant": true }
+        { "refId": "A", "expr": "sum by (payment_method) (payment_requests_total{payment_status=\"paid\", service=~\"$service\"})", "format": "table", "instant": true },
+        { "refId": "B", "expr": "sum by (payment_method) (payment_requests_total{payment_status=\"failed\", service=~\"$service\"})", "format": "table", "instant": true },
+        { "refId": "C", "expr": "sum by (payment_method) (payment_requests_total{payment_status=\"paid\", service=~\"$service\"}) / sum by (payment_method) (payment_requests_total{service=~\"$service\"})", "format": "table", "instant": true }
       ],
       "transformations": [
         { "id": "joinByField", "options": { "byField": "payment_method", "mode": "outer" } },
@@ -609,7 +635,7 @@
         {
           "refId": "A",
           "datasource": { "type": "loki", "uid": "loki" },
-          "expr": "{service_name=~\"${service:regex}\"}",
+          "expr": "{service_name=~\"platform-.+-${service:regex}\"}",
           "editorMode": "code"
         }
       ]
@@ -623,10 +649,8 @@
       {
         "name": "service",
         "label": "Service",
-        "type": "query",
-        "datasource": { "type": "prometheus", "uid": "prometheus" },
-        "query": { "query": "label_values(service_name)", "refId": "service" },
-        "refresh": 2,
+        "type": "custom",
+        "query": "auth-api : auth, catalog-api : catalog, notification-api : notification, order-api : order, payment-api : payment",
         "includeAll": true,
         "multi": true,
         "allValue": ".+",
