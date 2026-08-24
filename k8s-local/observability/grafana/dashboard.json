@@ -466,9 +466,127 @@
       ]
     },
     {
-      "title": "--- Logs ---",
+      "title": "--- Business Metrics (Payments) ---",
       "type": "row",
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 41 },
+      "collapsed": false
+    },
+    {
+      "title": "Payment Success Rate",
+      "description": "paid / all attempts since the pods started. 100% when no cod was sent; every cod checkout pulls it down.",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 42 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 0.85 }] }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "area"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(payment_requests_total{payment_status=\"paid\", service_name=~\"$service\"}) / sum(payment_requests_total{service_name=~\"$service\"})",
+          "legendFormat": "success rate"
+        }
+      ]
+    },
+    {
+      "title": "Payment Success Rate Over Time (2m window)",
+      "description": "The same expression the order canary AnalysisTemplate evaluates. The dashed line is the rollback threshold: below it the canary aborts. 0.85 sits under the ~0.90 baseline a 10% cod traffic mix produces.",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 6, "y": 42 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "color": { "mode": "thresholds" },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "thresholdsStyle": { "mode": "dashed" }
+          },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 0.85 }] }
+        }
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(payment_requests_total{payment_status=\"paid\", service_name=~\"$service\"}[2m])) / sum(rate(payment_requests_total{service_name=~\"$service\"}[2m]))",
+          "legendFormat": "success rate"
+        }
+      ]
+    },
+    {
+      "title": "Success Rate by Payment Method",
+      "description": "One row per method, paid and failed side by side. Nothing here assumes cod always declines — the rows read whatever the counter recorded, so a cod that starts settling shows up as a paid count without any change to this panel.",
+      "type": "table",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 42 },
+      "fieldConfig": {
+        "defaults": { "noValue": "0" },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "success" },
+            "properties": [
+              { "id": "unit", "value": "percentunit" },
+              { "id": "min", "value": 0 },
+              { "id": "max", "value": 1 },
+              { "id": "custom.cellOptions", "value": { "type": "color-background" } },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "red", "value": null },
+                    { "color": "yellow", "value": 0.8 },
+                    { "color": "green", "value": 0.95 }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": { "showHeader": true },
+      "targets": [
+        { "refId": "A", "expr": "sum by (payment_method) (payment_requests_total{payment_status=\"paid\", service_name=~\"$service\"})", "format": "table", "instant": true },
+        { "refId": "B", "expr": "sum by (payment_method) (payment_requests_total{payment_status=\"failed\", service_name=~\"$service\"})", "format": "table", "instant": true },
+        { "refId": "C", "expr": "sum by (payment_method) (payment_requests_total{payment_status=\"paid\", service_name=~\"$service\"}) / sum by (payment_method) (payment_requests_total{service_name=~\"$service\"})", "format": "table", "instant": true }
+      ],
+      "transformations": [
+        { "id": "joinByField", "options": { "byField": "payment_method", "mode": "outer" } },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time 1": true, "Time 2": true, "Time 3": true },
+            "renameByName": { "payment_method": "method", "Value #A": "paid", "Value #B": "failed", "Value #C": "success" },
+            "indexByName": { "payment_method": 0, "Value #A": 1, "Value #B": 2, "Value #C": 3 }
+          }
+        }
+      ]
+    },
+    {
+      "title": "--- Logs ---",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 50 },
       "collapsed": false
     },
     {
@@ -476,7 +594,7 @@
       "description": "Live logs filtered by service — click trace_id to jump to Tempo",
       "type": "logs",
       "datasource": { "type": "loki", "uid": "loki" },
-      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 42 },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 51 },
       "options": {
         "showTime": true,
         "showLabels": true,
