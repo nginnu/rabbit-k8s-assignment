@@ -19,9 +19,153 @@
   "links": [],
   "panels": [
     {
-      "title": "--- RED Metrics (per Service) ---",
+      "title": "--- Business Metrics (Payments) ---",
       "type": "row",
       "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false
+    },
+    {
+      "title": "Orders Created",
+      "description": "order.created — counted after the insert lands, so an order the DB rejected never appears here.",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 4, "x": 0, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "0",
+          "color": { "mode": "fixed", "fixedColor": "text" }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "none",
+        "graphMode": "area"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(order_created_total{service=~\"$service\"})",
+          "legendFormat": "orders"
+        }
+      ]
+    },
+    {
+      "title": "Payment Success Rate",
+      "description": "paid / all attempts since the pods started. 100% when no cod was sent; every cod checkout pulls it down.",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 4, "x": 4, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 0.85 }] }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "area"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(payment_requests_total{payment_status=\"paid\", service=~\"$service\"}) / sum(payment_requests_total{service=~\"$service\"})",
+          "legendFormat": "success rate"
+        }
+      ]
+    },
+    {
+      "title": "Payment Success Rate Over Time",
+      "description": "The dashed line is the rollback threshold: below it the canary aborts. 0.85 sits under the ~0.90 baseline a 10% cod traffic mix produces. The window follows the time picker via $__rate_interval; the AnalysisTemplate evaluates the same ratio over a fixed 2m, so the two read alike only at short ranges.",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 10, "x": 8, "y": 1 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "color": { "mode": "thresholds" },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 10,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "thresholdsStyle": { "mode": "dashed" }
+          },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 0.85 }] }
+        }
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(payment_requests_total{payment_status=\"paid\", service=~\"$service\"}[$__rate_interval])) / sum(rate(payment_requests_total{service=~\"$service\"}[$__rate_interval]))",
+          "legendFormat": "success rate"
+        }
+      ]
+    },
+    {
+      "title": "Success Rate by Payment Method",
+      "description": "One row per method, paid and failed side by side. Nothing here assumes cod always declines — the rows read whatever the counter recorded, so a cod that starts settling shows up as a paid count without any change to this panel.",
+      "type": "table",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 1 },
+      "fieldConfig": {
+        "defaults": { "noValue": "0" },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "success" },
+            "properties": [
+              { "id": "unit", "value": "percentunit" },
+              { "id": "min", "value": 0 },
+              { "id": "max", "value": 1 },
+              { "id": "custom.cellOptions", "value": { "type": "color-background" } },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    { "color": "red", "value": null },
+                    { "color": "yellow", "value": 0.8 },
+                    { "color": "green", "value": 0.95 }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": { "showHeader": true },
+      "targets": [
+        { "refId": "A", "expr": "sum by (payment_method) (payment_requests_total{payment_status=\"paid\", service=~\"$service\"})", "format": "table", "instant": true },
+        { "refId": "B", "expr": "sum by (payment_method) (payment_requests_total{payment_status=\"failed\", service=~\"$service\"})", "format": "table", "instant": true },
+        { "refId": "C", "expr": "sum by (payment_method) (payment_requests_total{payment_status=\"paid\", service=~\"$service\"}) / sum by (payment_method) (payment_requests_total{service=~\"$service\"})", "format": "table", "instant": true }
+      ],
+      "transformations": [
+        { "id": "joinByField", "options": { "byField": "payment_method", "mode": "outer" } },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time 1": true, "Time 2": true, "Time 3": true },
+            "renameByName": { "payment_method": "method", "Value #A": "paid", "Value #B": "failed", "Value #C": "success" },
+            "indexByName": { "payment_method": 0, "Value #A": 1, "Value #B": 2, "Value #C": 3 }
+          }
+        }
+      ]
+    },
+    {
+      "title": "--- RED Metrics (per Service) ---",
+      "type": "row",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 },
       "collapsed": false
     },
     {
@@ -29,7 +173,7 @@
       "description": "Requests per second by service",
       "type": "stat",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 1 },
+      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 10 },
       "fieldConfig": {
         "defaults": {
           "unit": "reqps",
@@ -63,7 +207,7 @@
       "description": "Percentage of 5xx responses per service",
       "type": "stat",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 4, "w": 12, "x": 0, "y": 5 },
+      "gridPos": { "h": 4, "w": 12, "x": 0, "y": 14 },
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
@@ -98,7 +242,7 @@
       "description": "99th percentile request latency per service",
       "type": "stat",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 4, "w": 12, "x": 12, "y": 5 },
+      "gridPos": { "h": 4, "w": 12, "x": 12, "y": 14 },
       "fieldConfig": {
         "defaults": {
           "unit": "s",
@@ -131,7 +275,7 @@
       "title": "Request Rate Over Time",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 18 },
       "fieldConfig": {
         "defaults": {
           "unit": "reqps",
@@ -163,7 +307,7 @@
       "title": "Error Rate Over Time",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 9 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 18 },
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
@@ -200,7 +344,7 @@
       "title": "p50 / p99 Latency Over Time",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 17 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 26 },
       "fieldConfig": {
         "defaults": {
           "unit": "s",
@@ -245,7 +389,7 @@
       "description": "Latency of outgoing HTTP calls per service (service-to-service)",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 17 },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 26 },
       "fieldConfig": {
         "defaults": {
           "unit": "s",
@@ -274,7 +418,7 @@
     {
       "title": "--- USE Metrics (DB Connection Pool) ---",
       "type": "row",
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 25 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 34 },
       "collapsed": false
     },
     {
@@ -282,7 +426,7 @@
       "description": "Number of active database connections per service",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 26 },
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 35 },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -311,7 +455,7 @@
       "description": "Open connections vs max limit — saturation indicator",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 26 },
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 35 },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -345,7 +489,7 @@
       "description": "Total waits for available connection — saturation signal",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 26 },
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 35 },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -379,7 +523,7 @@
     {
       "title": "--- USE Metrics (Redis Connection Pool) ---",
       "type": "row",
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 33 },
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 42 },
       "collapsed": false
     },
     {
@@ -387,7 +531,7 @@
       "description": "Active Redis connections",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 34 },
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 43 },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -411,7 +555,7 @@
       "description": "Connection pool hits/misses — high misses = pool too small",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 34 },
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 43 },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -440,7 +584,7 @@
       "description": "Connection pool timeouts and waits — saturation signal",
       "type": "timeseries",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 34 },
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 43 },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -462,150 +606,6 @@
           "refId": "waits",
           "expr": "rate(db_client_connections_waits{service=~\"$service\"}[1m])",
           "legendFormat": "{{service}}-api waits/s"
-        }
-      ]
-    },
-    {
-      "title": "--- Business Metrics (Payments) ---",
-      "type": "row",
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 41 },
-      "collapsed": false
-    },
-    {
-      "title": "Orders Created",
-      "description": "order.created — counted after the insert lands, so an order the DB rejected never appears here.",
-      "type": "stat",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 8, "w": 4, "x": 0, "y": 42 },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "noValue": "0",
-          "color": { "mode": "fixed", "fixedColor": "text" }
-        }
-      },
-      "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"] },
-        "colorMode": "none",
-        "graphMode": "area"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "sum(order_created_total{service=~\"$service\"})",
-          "legendFormat": "orders"
-        }
-      ]
-    },
-    {
-      "title": "Payment Success Rate",
-      "description": "paid / all attempts since the pods started. 100% when no cod was sent; every cod checkout pulls it down.",
-      "type": "stat",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 8, "w": 4, "x": 4, "y": 42 },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percentunit",
-          "min": 0,
-          "max": 1,
-          "color": { "mode": "thresholds" },
-          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 0.85 }] }
-        }
-      },
-      "options": {
-        "reduceOptions": { "calcs": ["lastNotNull"] },
-        "colorMode": "background",
-        "graphMode": "area"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "sum(payment_requests_total{payment_status=\"paid\", service=~\"$service\"}) / sum(payment_requests_total{service=~\"$service\"})",
-          "legendFormat": "success rate"
-        }
-      ]
-    },
-    {
-      "title": "Payment Success Rate Over Time",
-      "description": "The dashed line is the rollback threshold: below it the canary aborts. 0.85 sits under the ~0.90 baseline a 10% cod traffic mix produces. The window follows the time picker via $__rate_interval; the AnalysisTemplate evaluates the same ratio over a fixed 2m, so the two read alike only at short ranges.",
-      "type": "timeseries",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 8, "w": 10, "x": 8, "y": 42 },
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percentunit",
-          "min": 0,
-          "max": 1,
-          "color": { "mode": "thresholds" },
-          "custom": {
-            "drawStyle": "line",
-            "lineInterpolation": "smooth",
-            "fillOpacity": 10,
-            "pointSize": 5,
-            "showPoints": "auto",
-            "thresholdsStyle": { "mode": "dashed" }
-          },
-          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 0.85 }] }
-        }
-      },
-      "options": {
-        "legend": { "displayMode": "list", "placement": "bottom" },
-        "tooltip": { "mode": "multi", "sort": "desc" }
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "expr": "sum(rate(payment_requests_total{payment_status=\"paid\", service=~\"$service\"}[$__rate_interval])) / sum(rate(payment_requests_total{service=~\"$service\"}[$__rate_interval]))",
-          "legendFormat": "success rate"
-        }
-      ]
-    },
-    {
-      "title": "Success Rate by Payment Method",
-      "description": "One row per method, paid and failed side by side. Nothing here assumes cod always declines — the rows read whatever the counter recorded, so a cod that starts settling shows up as a paid count without any change to this panel.",
-      "type": "table",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 42 },
-      "fieldConfig": {
-        "defaults": { "noValue": "0" },
-        "overrides": [
-          {
-            "matcher": { "id": "byName", "options": "success" },
-            "properties": [
-              { "id": "unit", "value": "percentunit" },
-              { "id": "min", "value": 0 },
-              { "id": "max", "value": 1 },
-              { "id": "custom.cellOptions", "value": { "type": "color-background" } },
-              {
-                "id": "thresholds",
-                "value": {
-                  "mode": "absolute",
-                  "steps": [
-                    { "color": "red", "value": null },
-                    { "color": "yellow", "value": 0.8 },
-                    { "color": "green", "value": 0.95 }
-                  ]
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "options": { "showHeader": true },
-      "targets": [
-        { "refId": "A", "expr": "sum by (payment_method) (payment_requests_total{payment_status=\"paid\", service=~\"$service\"})", "format": "table", "instant": true },
-        { "refId": "B", "expr": "sum by (payment_method) (payment_requests_total{payment_status=\"failed\", service=~\"$service\"})", "format": "table", "instant": true },
-        { "refId": "C", "expr": "sum by (payment_method) (payment_requests_total{payment_status=\"paid\", service=~\"$service\"}) / sum by (payment_method) (payment_requests_total{service=~\"$service\"})", "format": "table", "instant": true }
-      ],
-      "transformations": [
-        { "id": "joinByField", "options": { "byField": "payment_method", "mode": "outer" } },
-        {
-          "id": "organize",
-          "options": {
-            "excludeByName": { "Time 1": true, "Time 2": true, "Time 3": true },
-            "renameByName": { "payment_method": "method", "Value #A": "paid", "Value #B": "failed", "Value #C": "success" },
-            "indexByName": { "payment_method": 0, "Value #A": 1, "Value #B": 2, "Value #C": 3 }
-          }
         }
       ]
     },
