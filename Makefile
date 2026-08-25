@@ -298,16 +298,19 @@ kiali: istio observability
 ROLLOUTS_VERSION     := 2.41.1
 ROLLOUTS_APP_VERSION := v1.9.1
 
-## rollouts: install the Argo Rollouts controller
+## rollouts: install the Argo Rollouts controller and dashboard
 rollouts: namespaces
 	@helm repo add argo https://argoproj.github.io/argo-helm >/dev/null 2>&1 || true
 	@helm repo update argo >/dev/null
 	@helm upgrade --install argo-rollouts argo/argo-rollouts \
-		-n argo-rollouts --create-namespace --version $(ROLLOUTS_VERSION)
+		-n argo-rollouts --create-namespace --version $(ROLLOUTS_VERSION) \
+		-f $(LOCAL)/argo-rollouts/values.yaml
 	@kubectl -n argo-rollouts rollout status deployment/argo-rollouts --timeout=180s
+	@kubectl -n argo-rollouts rollout status deployment/argo-rollouts-dashboard --timeout=180s
 	@$(SCRIPTS)/check-version.sh argo-rollouts $(ROLLOUTS_APP_VERSION) \
 		"$$(kubectl -n argo-rollouts get deploy argo-rollouts \
 			-o jsonpath='{.spec.template.spec.containers[0].image}' | sed 's/.*://')"
+	@kubectl apply -f $(LOCAL)/argo-rollouts/route.yaml
 
 ARGOCD_VERSION     := 10.3.2
 ARGOCD_APP_VERSION := v3.5.0
