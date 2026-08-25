@@ -229,14 +229,21 @@ APP_DEPLOYS := auth catalog order payment notification web-ui
 
 ## apps: deploy the application services from their charts
 apps: data app-secrets
+	@# --force-conflicts: the rollouts controller rewrites DestinationRule/VirtualService
+	@# subsets at runtime — helm has no ignoreDifferences, so force past its field claims
 	@for c in $(APP_CHARTS); do \
 		ns=$$($(GITOPS_SCRIPTS)/chart-namespace.sh $$c) || exit 1; \
 		helm dependency update $(CHARTS)/$$c >/dev/null; \
-		helm upgrade --install $$c $(CHARTS)/$$c -n $$ns; \
+		helm upgrade --install $$c $(CHARTS)/$$c -n $$ns --force-conflicts; \
 	done
 	@for d in $(APP_DEPLOYS); do \
 		ns=$$($(GITOPS_SCRIPTS)/chart-namespace.sh $$d) || exit 1; \
-		kubectl -n $$ns rollout status deployment/$$d --timeout=180s; \
+		kind=$$(awk '/workloadKind:/ {print $$2; exit}' $(CHARTS)/$$d/values.yaml); \
+		if [ "$$kind" = Rollout ]; then \
+			kubectl -n $$ns wait --for=condition=Healthy rollout/$$d --timeout=180s; \
+		else \
+			kubectl -n $$ns rollout status deployment/$$d --timeout=180s; \
+		fi; \
 	done
 	@kubectl delete httproute api -n api --ignore-not-found
 
@@ -354,16 +361,11 @@ test-%:
 	./tests/$$suite
 
 ## up: everything, in order
-up: cluster cilium namespaces gateway routes istio images
-	@$(MAKE) -f $(firstword $(MAKEFILE_LIST)) --no-print-directory observability
-	@$(MAKE) -f $(firstword $(MAKEFILE_LIST)) --no-print-directory kiali
-	@$(MAKE) -f $(firstword $(MAKEFILE_LIST)) --no-print-directory rollouts
-	@$(MAKE) -f $(firstword $(MAKEFILE_LIST)) --no-print-directory argocd
-	@$(MAKE) -f $(firstword $(MAKEFILE_LIST)) --no-print-directory apps
-	@$(MAKE) -f $(firstword $(MAKEFILE_LIST)) --no-print-directory verify
+up: cluster cilium namespaces gateway routes istio-gateway images \
+	observability kiali rollouts argocd apps verify
 
 ## down: delete the cluster
 down:
 	@kind delete cluster --name $(CLUSTER)
 
-.PHONY: help preflight cluster cilium gateway-api networking traefik tls gateway routes namespaces istio secrets app-secrets sql data images apps observability kiali rollouts argocd verify test up down
+.PHONY: help preflight cluster cilium gateway-api networking traefik tls gateway routes namespaces istio istio-gateway secrets app-secrets sql data images apps observability kiali rollouts argocd verify test up down
