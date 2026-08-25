@@ -330,6 +330,36 @@ argocd: namespaces
 	@kubectl apply -f $(LOCAL)/argocd/netpol.yaml
 	@kubectl apply -f $(LOCAL)/argocd/cnp-apiserver.yaml
 
+## gitops: hand the app charts to Argo CD, which syncs them from git
+gitops:
+	@kubectl apply -f $(GITOPS)/bootstrap/bootstrap.yaml
+	@expected=$$(( $$(ls -d $(CHARTS)/*/ | grep -vc '_template') + 1 )); \
+	for i in $$(seq 1 60); do \
+		n=$$(kubectl -n argocd get applications.argoproj.io --no-headers 2>/dev/null | wc -l | tr -d ' '); \
+		[ "$$n" -ge "$$expected" ] && break; \
+		sleep 5; \
+	done; \
+	if [ "$$n" -lt "$$expected" ]; then \
+		echo "make gitops: $$n of $$expected Applications after 5m"; \
+		kubectl -n argocd get applications.argoproj.io; \
+		exit 1; \
+	fi
+	@kubectl -n argocd wait --for=jsonpath='{.status.sync.status}'=Synced \
+		applications.argoproj.io --all --timeout=300s
+	@for i in $$(seq 1 60); do \
+		bad=$$(kubectl -n argocd get applications.argoproj.io \
+			-o jsonpath='{range .items[*]}{.metadata.name} {.status.health.status}{"\n"}{end}' \
+			| grep -vE ' (Healthy|Suspended)$$' || true); \
+		[ -z "$$bad" ] && break; \
+		sleep 5; \
+	done; \
+	if [ -n "$$bad" ]; then \
+		echo "make gitops: not healthy after 5m"; \
+		echo "$$bad"; \
+		exit 1; \
+	fi
+	@kubectl -n argocd get applications.argoproj.io
+
 ## verify: prove the stack is actually working, not merely present
 verify:
 	@echo "── nodes ─────────────────────────────────────────"
@@ -371,4 +401,4 @@ up: cluster cilium namespaces gateway routes istio-gateway images \
 down:
 	@kind delete cluster --name $(CLUSTER)
 
-.PHONY: help preflight cluster cilium gateway-api networking traefik tls gateway routes namespaces istio istio-gateway secrets app-secrets sql data images apps observability kiali rollouts argocd verify test up down
+.PHONY: help preflight cluster cilium gateway-api networking traefik tls gateway routes namespaces istio istio-gateway secrets app-secrets sql data images apps observability kiali rollouts argocd gitops verify test up down
