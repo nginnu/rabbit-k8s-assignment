@@ -264,6 +264,7 @@ observability: namespaces
 	@helm repo update prometheus-community grafana >/dev/null
 	@kubectl -n observability create configmap grafana-dashboards \
 		--from-file=platform.json=$(OBS)/grafana/dashboard.json \
+		--from-file=canary.json=$(OBS)/grafana/canary.json \
 		--dry-run=client -o yaml | kubectl apply -f -
 	@helm upgrade --install prometheus prometheus-community/prometheus \
 		-n observability --version $(PROMETHEUS_VERSION) -f $(OBS)/prometheus/values.yaml
