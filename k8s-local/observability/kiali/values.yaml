@@ -25,6 +25,10 @@ server:
   web_root: /
 
 external_services:
+  istio:
+    gateway_api_classes:
+      - name: External
+        class_name: external
   prometheus:
     url: http://prometheus-server.observability.svc.cluster.local
   grafana:
