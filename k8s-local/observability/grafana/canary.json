@@ -344,6 +344,150 @@
       "options": {
         "showHeader": true
       }
+    },
+    {
+      "id": 6,
+      "title": "Payments by method",
+      "type": "table",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 22
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "instant": true,
+          "expr": "sum by (rs, payment_method) (label_replace(increase(payment_requests_total{service=\"$svc\", payment_status=\"paid\"}[$__range]), \"rs\", \"$1\", \"service_instance_id\", \"($svc-[^-]+)-.*\"))"
+        },
+        {
+          "refId": "B",
+          "format": "table",
+          "instant": true,
+          "expr": "sum by (rs, payment_method) (label_replace(increase(payment_requests_total{service=\"$svc\", payment_status=\"failed\"}[$__range]), \"rs\", \"$1\", \"service_instance_id\", \"($svc-[^-]+)-.*\"))"
+        },
+        {
+          "refId": "C",
+          "format": "table",
+          "instant": true,
+          "expr": "sum by (rs, payment_method) (label_replace(increase(payment_requests_total{service=\"$svc\", payment_status=\"failed\"}[$__range]), \"rs\", \"$1\", \"service_instance_id\", \"($svc-[^-]+)-.*\")) / sum by (rs, payment_method) (label_replace(increase(payment_requests_total{service=\"$svc\"}[$__range]), \"rs\", \"$1\", \"service_instance_id\", \"($svc-[^-]+)-.*\"))"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Time 1": true,
+              "Time 2": true,
+              "Time 3": true
+            },
+            "renameByName": {
+              "rs": "ReplicaSet",
+              "payment_method": "Method",
+              "Value #A": "paid",
+              "Value #B": "failed",
+              "Value #C": "fail %"
+            },
+            "indexByName": {}
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 0
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "fail %"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "decimals",
+                "value": 1
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 0.05
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "failed"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "text",
+                      "value": null
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "ReplicaSet",
+            "desc": true
+          }
+        ]
+      }
     }
   ]
 }
