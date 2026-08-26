@@ -194,14 +194,16 @@ standardized traffic routing.
 
 **What** — What do we get / What problem does it solve?
 
-Encrypted communication at the Edge, with a clear path to mTLS for
-service-to-service communication to provide workload identity and prevent
-unauthorized service-to-service access.
+Encrypted communication at the Edge, and mTLS (STRICT, mesh-wide) for
+service-to-service communication — every workload carries its own SPIFFE
+identity, and plaintext is refused rather than merely avoided
+([notes/10](notes/10-strict-mesh.md)).
 
 **Production Extension:**
 
-mTLS Service-to-Service — to authenticate workloads and encrypt internal
-traffic, not just protect client-to-edge communication.
+mTLS on the last plaintext hop — Traefik still hands plain HTTP to the
+chained istio-ingressgateway on port 80 (the one port-level exception
+STRICT carries); re-encrypting that hop needs a sidecar on the Traefik pod.
 
 **Scope Note:**
 

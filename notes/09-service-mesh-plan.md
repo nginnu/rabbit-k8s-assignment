@@ -165,6 +165,11 @@ None of this moves to the mesh under the working boundary above.
   inbound capture, plus the istiod:15012 egress in the traefik NetworkPolicy.
   That is row 3 of the no-overlap table below — the TLS handoff seam — and it
   is not implemented in this round.
+  *(Superseded 2026-08-26: the chained istio-ingressgateway shrank the
+  plaintext surface to one port on one workload, and STRICT went mesh-wide
+  with a port-80 exception instead — see
+  [notes/10](10-strict-mesh.md). The Traefik sidecar remains the way to
+  close the residual Traefik→gateway hop.)*
 - Verification for this round: `make test-istio` and the full `make test` on a
   cluster brought up by `make up`. dummy joins only after its chart change is
   pushed and Argo CD syncs it.

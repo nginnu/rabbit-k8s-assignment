@@ -1,23 +1,51 @@
+# Mesh-wide STRICT with exactly one plaintext exception.
+#
+# The mesh-level rule makes every sidecar refuse plaintext on its inbound app
+# ports, so east-west mTLS stops being a preference (PERMISSIVE) and becomes
+# the only way in. What STRICT adds over PERMISSIVE is the refusal: sidecars
+# already negotiated mTLS under PERMISSIVE, so nothing changes on the wire
+# for callers that are meshed today — what changes is that a pod that lost
+# its sidecar, or a caller that never had one, gets a connection reset
+# instead of a silent plaintext fallback.
+#
+# The exception: Traefik is not meshed and hands plaintext HTTP to
+# istio-ingressgateway on port 80 — the chained-gateway hop. The gateway
+# workload gets a port-level DISABLE for that one port; every other port on
+# it stays STRICT, so its outbound calls into the mesh are mTLS like any
+# other sidecar. Port-level DISABLE overrides the workload's own STRICT, and
+# spelling spec.mtls out (rather than relying on field inheritance from the
+# mesh-level rule) keeps the exception's meaning local to this file.
+#
+# Residual plaintext surface, accepted and recorded in notes/10-strict-mesh.md:
+# the Traefik -> gateway hop itself is still plain HTTP on the pod network.
+# Closing it needs a sidecar on the Traefik pod with its hostPorts excluded
+# from capture — the notes/09 follow-up, still deferred.
+#
+# The workload-scoped STRICT rules for payment and notification are gone:
+# this rule supersedes them. `make istio` deletes the old objects, which
+# kubectl apply alone cannot do.
 apiVersion: security.istio.io/v1
 kind: PeerAuthentication
 metadata:
-  name: payment
-  namespace: api
+  name: default-strict
+  namespace: istio-system
 spec:
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: payment
   mtls:
     mode: STRICT
 ---
 apiVersion: security.istio.io/v1
 kind: PeerAuthentication
 metadata:
-  name: notification
-  namespace: api
+  name: ingress-gateway-plain-80
+  namespace: istio-system
 spec:
   selector:
     matchLabels:
-      app.kubernetes.io/name: notification
+      istio: ingressgateway
   mtls:
     mode: STRICT
+  # A map keyed by port in the v1 API (not the v1beta1 list) — the gateway's
+  # one plaintext listener.
+  portLevelMtls:
+    "80":
+      mode: DISABLE

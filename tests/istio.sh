@@ -5,10 +5,11 @@
 # in a sidecar's access log, and east-west mTLS is declared rather than
 # assumed.
 #
-# What is deliberately absent: STRICT. Traefik is not in the mesh and its
-# plaintext HTTP must keep reaching these pods, so no PeerAuthentication is
-# applied and mTLS is asserted client-side by the DestinationRule — see
-# notes/09-service-mesh-plan.md.
+# STRICT is mesh-wide (notes/10-strict-mesh.md): every meshed service must
+# refuse plaintext on its app port, and the only plaintext left in the
+# cluster is Traefik -> istio-ingressgateway:80, kept alive by one
+# port-level exception. Both halves are proven below — the refusal on the
+# wire, and the edge still answering through the exception.
 #
 # The full request journey (checkout, auth, observability) is proven by the
 # other suites; this file only proves the mesh layer.
@@ -21,6 +22,7 @@ cd "$(dirname "$0")" || exit 1
 require_cluster
 
 ISTIO_NS="${ISTIO_NS:-istio-system}"
+WEB_NS="${WEB_NS:-web}"
 
 section "istiod is up"
 
@@ -30,7 +32,7 @@ else
   bad "deployment/istiod not found — run 'make istio' first"
 fi
 
-if kubectl -n "$ISTIO_NS" rollout status deployment/istiod --timeout=60s >/dev/null 2>&1; then
+if kubectl -n "$ISTIO_NS" rollout status deployment istiod --timeout=60s >/dev/null 2>&1; then
   ok "istiod is ready"
 else
   bad "istiod is not ready — no sidecar can start or fetch a certificate"
@@ -130,17 +132,22 @@ fi
 
 section "east-west mTLS is declared, not assumed"
 
-# PERMISSIVE negotiates mTLS between sidecars by default; the DestinationRule
-# pins that so it survives a default changing. Proving the bytes themselves is
-# tls-proof.sh's method applied to an east-west hop — that capture belongs to
-# the STRICT follow-up in notes/09, not to this suite.
-mode=$(kubectl -n "$API_NS" get destinationrule east-west-mtls \
-  -o jsonpath='{.spec.trafficPolicy.tls.mode}' 2>/dev/null)
-if [ "$mode" = "ISTIO_MUTUAL" ]; then
-  ok "destinationrule/east-west-mtls sets ISTIO_MUTUAL for *.api.svc.cluster.local"
-else
-  bad "destinationrule/east-west-mtls missing or not ISTIO_MUTUAL — run 'make istio', which applies the manifest"
-fi
+# STRICT on the servers is half the contract; the other half is each caller
+# namespace naming ISTIO_MUTUAL, so the wire does not depend on auto-mTLS
+# defaults. exportTo "*" is part of the assertion because the callers live
+# outside the rules' own namespaces — web-ui (web) calls *.api, the gateway
+# (istio-system) calls both — and a rule nobody can see protects nobody.
+for ns in "$API_NS" "$WEB_NS"; do
+  mode=$(kubectl -n "$ns" get destinationrule east-west-mtls \
+    -o jsonpath='{.spec.trafficPolicy.tls.mode}' 2>/dev/null)
+  vis=$(kubectl -n "$ns" get destinationrule east-west-mtls \
+    -o jsonpath='{.spec.exportTo[0]}' 2>/dev/null)
+  if [ "$mode" = "ISTIO_MUTUAL" ] && [ "$vis" = "*" ]; then
+    ok "destinationrule/east-west-mtls in $ns — ISTIO_MUTUAL, visible to every namespace"
+  else
+    bad "destinationrule/east-west-mtls in $ns missing, not ISTIO_MUTUAL, or not exportTo * — run 'make istio', which applies the manifest"
+  fi
+done
 
 section "each service carries its own mesh identity"
 
@@ -181,28 +188,67 @@ else
   esac
 fi
 
-section "payment and notification refuse plaintext"
+section "mesh-wide STRICT, one plaintext exception"
 
-for pair in payment:7000 notification:8080; do
-  svc="${pair%%:*}"
-  port="${pair#*:}"
+# The rule shape first, then the behaviour it produces. The mesh-level rule
+# carries no selector, so it reaches every sidecar in the mesh; the gateway
+# exception opens port 80 only — the hop where Traefik's plaintext arrives.
+mode=$(kubectl -n "$ISTIO_NS" get peerauthentication default-strict \
+  -o jsonpath='{.spec.mtls.mode}' 2>/dev/null)
+sel=$(kubectl -n "$ISTIO_NS" get peerauthentication default-strict \
+  -o jsonpath='{.spec.selector}' 2>/dev/null)
+if [ "$mode" = "STRICT" ] && [ -z "$sel" ]; then
+  ok "peerauthentication/default-strict is selector-less STRICT — mesh-wide"
+else
+  bad "peerauthentication/default-strict missing, not STRICT, or carrying a selector — run 'make istio'"
+fi
 
-  mode=$(kubectl -n "$API_NS" get peerauthentication "$svc" \
-    -o jsonpath='{.spec.mtls.mode}' 2>/dev/null)
-  if [ "$mode" = "STRICT" ]; then
-    ok "peerauthentication/$svc is STRICT"
-  else
-    bad "peerauthentication/$svc missing or not STRICT — run 'make istio', which applies the manifest"
-  fi
+port80=$(kubectl -n "$ISTIO_NS" get peerauthentication ingress-gateway-plain-80 \
+  -o json 2>/dev/null \
+  | json 'd["spec"].get("portLevelMtls", {}).get("80", {}).get("mode", "absent")')
+gwl=$(kubectl -n "$ISTIO_NS" get peerauthentication ingress-gateway-plain-80 \
+  -o jsonpath='{.spec.selector.matchLabels.istio}' 2>/dev/null)
+if [ "$port80" = "DISABLE" ] && [ "$gwl" = "ingressgateway" ]; then
+  ok "peerauthentication/ingress-gateway-plain-80 disables mTLS on the gateway's port 80 only"
+else
+  bad "peerauthentication/ingress-gateway-plain-80 missing or not a port-80 DISABLE on the gateway — run 'make istio'"
+fi
 
-  pod=$(kubectl -n "$API_NS" get pod -l app.kubernetes.io/name="$svc" \
+# The superseded workload rules must be gone: a leftover payment/notification
+# STRICT would still work, but a stale half-description of the mesh is what
+# the next change gets designed against.
+leftover=$(kubectl -n "$API_NS" get peerauthentication payment notification \
+  -o name 2>/dev/null)
+if [ -z "$leftover" ]; then
+  ok "no workload-scoped PeerAuthentication left in $API_NS — superseded, not duplicated"
+else
+  bad "leftover workload PeerAuthentication: $leftover — run 'make istio', which deletes them"
+fi
+
+# The exception exists to keep the edge alive; if it stopped matching, the
+# storefront would die with it. Same probe routing.sh uses, restated here so
+# the mesh layer proves its own blast radius.
+expect "storefront / still answers 200 through Traefik -> gateway:80 -> web-ui" 200 "$(status GET /)"
+
+section "every meshed service refuses plaintext on its app port"
+
+# STRICT as behaviour, not declaration: the proxy's inbound config for the
+# app port must have no raw_buffer (plaintext) filter chain left. All six
+# meshed services, not just payment and notification — that pair led the
+# migration (notes/09), the rest moved with the mesh-wide rule (notes/10).
+for entry in "$API_NS auth 9001" "$API_NS catalog 9004" "$API_NS order 9002" \
+             "$API_NS payment 7000" "$API_NS notification 8080" "$WEB_NS web-ui 3000"; do
+  set -- $entry
+  ns="$1"; svc="$2"; port="$3"
+
+  pod=$(kubectl -n "$ns" get pod -l app.kubernetes.io/name="$svc" \
     -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
   if [ -z "$pod" ]; then
     bad "$svc — no pod to read the inbound listener from"
     continue
   fi
 
-  plain=$(kubectl -n "$API_NS" exec "$pod" -c istio-proxy -- \
+  plain=$(kubectl -n "$ns" exec "$pod" -c istio-proxy -- \
     pilot-agent request GET config_dump 2>/dev/null \
     | PORT="$port" json '
 sum(1
@@ -221,43 +267,53 @@ done
 
 section "a plaintext connection on the wire is actually refused"
 
-sender=$(kubectl -n "$API_NS" get pod -l app.kubernetes.io/name=order \
-  -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+# The config above says the proxy should refuse; this proves it does. The
+# probe curls a pod IP from inside a sidecar's istio-proxy container: traffic
+# from the proxy's own UID is exempt from the iptables redirect, so the
+# request leaves as real plaintext and lands on the destination's inbound
+# listener. The senders are chosen for what NetworkPolicy lets through —
+# order reaches payment and notification, web-ui reaches auth, catalog and
+# order — so a reset means STRICT refused the connection, not the netpol.
+refuses_plaintext() { # <sender-ns> <sender-svc> <dst-ns> <svc> <port>
+  sender_ns="$1" sender_svc="$2" dst_ns="$3" svc="$4" port="$5"
 
-if [ -z "$sender" ]; then
-  bad "no order pod — nothing that NetworkPolicy lets reach payment"
-else
-  for pair in payment:7000 notification:8080; do
-    svc="${pair%%:*}"
-    port="${pair#*:}"
+  sender=$(kubectl -n "$sender_ns" get pod -l app.kubernetes.io/name="$sender_svc" \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+  if [ -z "$sender" ]; then
+    bad "$sender_svc — no pod to send the plaintext probe from"
+    return
+  fi
 
-    ip=$(kubectl -n "$API_NS" get pod -l app.kubernetes.io/name="$svc" \
-      -o jsonpath='{.items[0].status.podIP}' 2>/dev/null)
-    if [ -z "$ip" ]; then
-      bad "$svc — no pod IP to connect to"
-      continue
-    fi
+  ip=$(kubectl -n "$dst_ns" get pod -l app.kubernetes.io/name="$svc" \
+    -o jsonpath='{.items[0].status.podIP}' 2>/dev/null)
+  if [ -z "$ip" ]; then
+    bad "$svc — no pod IP to connect to"
+    return
+  fi
 
-    kubectl -n "$API_NS" exec "$sender" -c istio-proxy -- \
-      curl -sS -o /dev/null --max-time 8 "http://$ip:$port/healthz" >/dev/null 2>&1
-    rc=$?
+  kubectl -n "$sender_ns" exec "$sender" -c istio-proxy -- \
+    curl -sS -o /dev/null --max-time 8 "http://$ip:$port/healthz" >/dev/null 2>&1
+  rc=$?
 
-    case "$rc" in
-      56|52|35)
-        ok "$svc :$port reset the plaintext connection (curl $rc) — STRICT is enforced on the wire" ;;
-      0)
-        bad "$svc :$port answered a plaintext request — STRICT is declared but not enforced" ;;
-      28)
-        bad "$svc :$port timed out — the packet never arrived, so this proves NetworkPolicy, not STRICT" ;;
-      *)
-        bad "$svc :$port — curl exited $rc, cannot tell whether the proxy refused" ;;
-    esac
-  done
-fi
+  case "$rc" in
+    56|52|35)
+      ok "$svc :$port reset the plaintext connection (curl $rc) — STRICT is enforced on the wire" ;;
+    0)
+      bad "$svc :$port answered a plaintext request — STRICT is declared but not enforced" ;;
+    28)
+      bad "$svc :$port timed out — the packet never arrived, so this proves NetworkPolicy, not STRICT" ;;
+    *)
+      bad "$svc :$port — curl exited $rc, cannot tell whether the proxy refused" ;;
+  esac
+}
+
+refuses_plaintext "$API_NS" order "$API_NS" payment      7000
+refuses_plaintext "$API_NS" order "$API_NS" notification 8080
+refuses_plaintext "$WEB_NS" web-ui "$API_NS" auth        9001
+refuses_plaintext "$WEB_NS" web-ui "$API_NS" catalog     9004
+refuses_plaintext "$WEB_NS" web-ui "$API_NS" order       9002
 
 section "web-ui is in the mesh, so nothing reaches api unencrypted"
-
-WEB_NS="${WEB_NS:-web}"
 
 pods=$(kubectl -n "$WEB_NS" get pods -l app.kubernetes.io/name=web-ui \
   -o jsonpath='{.items[*].metadata.name}' 2>/dev/null)
@@ -280,8 +336,10 @@ else
   sa=$(kubectl -n "$WEB_NS" get pod "$first" -o jsonpath='{.spec.serviceAccountName}' 2>/dev/null)
   expect "web-ui runs under its own ServiceAccount" "web-ui" "$sa"
 
-  # The reason web-ui is meshed at all: it is the only caller auth, catalog and
-  # order allow, so until its calls are mTLS those three cannot move to STRICT.
+  # Under mesh-wide STRICT a plaintext request cannot land at all, so this
+  # delta check is now the early-warning tripwire: a counter that moves means
+  # some path stopped speaking mTLS (a lost sidecar, a rule that stopped
+  # matching) before anything else notices.
   #
   # A delta, not a presence check: istio_requests_total never resets, so the
   # plaintext requests catalog served before web-ui was meshed stay in the

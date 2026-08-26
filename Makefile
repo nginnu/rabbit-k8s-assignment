@@ -155,6 +155,7 @@ istio: cilium namespaces
 	@$(SCRIPTS)/check-version.sh istiod $(ISTIO_VERSION) \
 		"$$(kubectl -n istio-system get deploy istiod \
 			-o jsonpath='{.spec.template.spec.containers[0].image}' | sed 's/.*://')"
+	@kubectl -n api delete peerauthentication payment notification --ignore-not-found >/dev/null  # superseded by the mesh-wide rule; apply cannot delete
 	@kubectl apply -f $(LOCAL)/istio/destination-rule.yaml
 	@kubectl apply -f $(LOCAL)/istio/peer-authentication.yaml
 
