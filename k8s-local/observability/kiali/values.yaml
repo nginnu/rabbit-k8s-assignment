@@ -36,5 +36,9 @@ external_services:
     # deprecation notice on every boot.
     external_url: https://grafana.localhost
     internal_url: http://grafana.observability.svc.cluster.local
+    dashboards:
+      - name: "LGTM Lab Overview"
+        variables:
+          workload: var-service
   tracing:
     enabled: false
