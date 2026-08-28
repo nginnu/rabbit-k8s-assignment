@@ -92,6 +92,16 @@ spec:
       ports:
         - protocol: TCP
           port: 15020
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: istiod
+      ports:
+        - protocol: TCP
+          port: 15014
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

@@ -1,22 +1,8 @@
-# grafana/alloy
-#
-# The collector every service points at. Receives OTLP, splits the three signals
-# to Loki, Tempo and Prometheus, and scrapes the one signal nobody pushes — the
-# Istio sidecars' own metrics.
-#
-# A Deployment, not the chart's default DaemonSet: what it receives is pushed,
-# and the one scrape it runs is network-wide, not node-local.
-
 controller:
   type: deployment
-  # One replica, and the scrape below is why it has to stay one: every replica
-  # discovers every meshed pod, so a second one scrapes each sidecar again and
-  # remote-writes a duplicate sample per series. Scaling this out means turning
-  # on alloy.clustering, not raising this number.
   replicas: 1
 
 alloy:
-  # The applications send OTLP here; nothing else needs to reach Alloy.
   extraPorts:
     - name: otlp-grpc
       port: 4317
@@ -33,16 +19,6 @@ alloy:
 
   configMap:
     content: |-
-      // OTLP in, three signals out — plus one scraped in.
-      //
-      //   receiver :4317 / :4318
-      //     -> filter   drop /healthz spans
-      //     -> transform  derive deployment_environment and service
-      //          -> Loki (logs) / Tempo (traces) / Prometheus (metrics)
-      //
-      //   discovery pods in api -> scrape :15020/stats/prometheus
-      //          -> Prometheus (istio_ / envoy_)
-
       otelcol.receiver.otlp "default" {
         grpc {
           endpoint = "0.0.0.0:4317"
@@ -58,8 +34,6 @@ alloy:
         }
       }
 
-      // Health checks would otherwise be most of the traces: every 10s across
-      // six services. Three attribute names because the semconv changed.
       otelcol.processor.filter "drop_healthz" {
         error_mode = "ignore"
 
@@ -76,12 +50,6 @@ alloy:
         }
       }
 
-      // service.name arrives as platform-local-auth. Split it into
-      // deployment_environment=local and service=auth, which is what every
-      // dashboard and the Tempo-to-Loki link query by.
-      //
-      // The services deliberately do not send deployment.environment themselves
-      // — deriving it here keeps one source for the label.
       otelcol.processor.transform "add_labels" {
         error_mode = "ignore"
 
@@ -144,38 +112,22 @@ alloy:
       otelcol.exporter.prometheus "default" {
         forward_to = [prometheus.remote_write.default.receiver]
         add_metric_suffixes = true
-        // Turns the resource attributes above into actual Prometheus labels.
-        // Without it `service` never exists and every dashboard panel is blank.
         resource_to_telemetry_conversion = true
       }
 
-      // The chart names the service prometheus-server and puts it on port 80,
-      // not prometheus:9090.
       prometheus.remote_write "default" {
         endpoint {
           url = "http://prometheus-server.observability.svc.cluster.local:80/api/v1/write"
         }
       }
 
-      // A sidecar serves its istio_ metrics rather than exporting them, so
-      // nothing arrives unless something scrapes: without this block Prometheus
-      // holds no istio_ series and Kiali draws an empty graph over a mesh that
-      // is carrying every request.
       discovery.kubernetes "meshed_pods" {
         role = "pod"
 
-        // Must match the egress rule in platform/observability/netpol.yaml —
-        // a target that policy blocks is a scrape error every 15s, not a
-        // metric.
         namespaces {
           names = ["api", "web"]
         }
 
-        // The injection webhook writes security.istio.io/tlsMode, so it marks
-        // exactly the pods that have a sidecar — without it notification, whose
-        // sidecar arrives only once Argo CD syncs, is scraped on a dead port.
-        //
-        // Running only: a Pending pod has no IP and its target becomes ":15020".
         selectors {
           role  = "pod"
           label = "security.istio.io/tlsMode=istio"
@@ -186,21 +138,12 @@ alloy:
       discovery.relabel "istio_sidecars" {
         targets = discovery.kubernetes.meshed_pods.targets
 
-        // Pod discovery emits one target per declared container port, and the
-        // rewrite below collapses them to one address, so without this keep each
-        // sidecar is scraped twice. The name matches even though the proxy is a
-        // native sidecar — pod discovery labels initContainers with the same
-        // container-name label.
         rule {
           source_labels = ["__meta_kubernetes_pod_container_name"]
           regex         = "istio-proxy"
           action        = "keep"
         }
 
-        // The discovered port is the proxy's own 15090. 15020 is the agent's
-        // merged-metrics endpoint — the port Istio annotates for scraping, the
-        // port excluded from the sidecar's inbound redirect, and the only one
-        // the two policies open. Left as discovered, every scrape is dropped.
         rule {
           source_labels = ["__meta_kubernetes_pod_ip"]
           regex         = "(.+)"
@@ -208,9 +151,6 @@ alloy:
           target_label  = "__address__"
         }
 
-        // Which pod a series came from is not in the metric: istio_ labels name
-        // workloads and services, so without these two a flapping replica cannot
-        // be told from its healthy sibling.
         rule {
           source_labels = ["__meta_kubernetes_pod_namespace"]
           target_label  = "namespace"
@@ -229,9 +169,49 @@ alloy:
         job_name     = "istio-proxy"
         metrics_path = "/stats/prometheus"
 
-        // 15s, not the component's 60s default. Kiali rates these counters over
-        // a one-minute window; at 60s that window holds a single sample, which
-        // rate() returns nothing for, and the graph stays empty with the metrics
-        // present in Prometheus.
+        scrape_interval = "15s"
+      }
+
+      discovery.kubernetes "istiod" {
+        role = "pod"
+
+        namespaces {
+          names = ["istio-system"]
+        }
+
+        selectors {
+          role  = "pod"
+          label = "app.kubernetes.io/name=istiod"
+          field = "status.phase=Running"
+        }
+      }
+
+      discovery.relabel "istiod" {
+        targets = discovery.kubernetes.istiod.targets
+
+        rule {
+          source_labels = ["__meta_kubernetes_pod_container_port_name"]
+          regex         = "http-monitoring"
+          action        = "keep"
+        }
+
+        rule {
+          source_labels = ["__meta_kubernetes_pod_namespace"]
+          target_label  = "namespace"
+        }
+
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          target_label  = "pod"
+        }
+      }
+
+      prometheus.scrape "istiod" {
+        targets    = discovery.relabel.istiod.output
+        forward_to = [prometheus.remote_write.default.receiver]
+
+        job_name     = "istiod"
+        metrics_path = "/metrics"
+
         scrape_interval = "15s"
       }
