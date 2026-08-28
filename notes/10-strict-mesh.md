@@ -90,8 +90,8 @@ into the only way in:
   port-80-only DISABLE, and no workload-scoped PeerAuthentication remains;
 - the edge survives its own exception: `GET /` still 200 through
   Traefik → gateway:80 → web-ui;
-- every meshed service (auth 9001, catalog 9004, order 9002, payment 7000,
-  notification 8080, **web-ui 3000**) has **no `raw_buffer` filter chain**
+- every meshed service (auth, catalog, order, payment, notification — all
+  :8080, **web-ui 3000**) has **no `raw_buffer` filter chain**
   on its app port — the Envoy config cannot accept plaintext;
 - plaintext on the wire is refused: probes from a sidecar's own
   istio-proxy container (exempt from the iptables redirect, so the request
