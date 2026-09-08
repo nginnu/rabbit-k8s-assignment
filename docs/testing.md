@@ -1,78 +1,63 @@
 # Testing
 
-Two layers, ordered cheapest first: the Go modules' own unit tests run on the
-host alone, then the shell suites under `tests/` (sourcing `tests/lib.sh`)
-prove the deployed cluster. Both record failures and keep going rather than
-`set -e` — one run reports every problem, not the first.
-
 ```sh
-make test          # unit + every cluster suite, cheapest first
-make test-unit     # go test both modules, no cluster required
-make test-preflight  # does the running cluster match what the repo declares
+make test            # every suite, cheapest first
+make test-auth       # one suite
 ```
 
-`tests/run-all.sh` runs them in this order: `unit.sh`, `routing.sh`,
-`route-isolation.sh`, `mesh.sh`, `istio.sh`, `auth.sh`, `checkout.sh`,
-`o11y-stack.sh`, `o11y-journey.sh`, `tls-proof.sh`, `resilience.sh` —
-`unit.sh` first because it needs no cluster and fails fastest;
-`resilience.sh` last because it deletes pods and takes minutes.
-`preflight.sh` is a gate, not a suite: it compares the running cluster
-against what the repo declares (versions, releases, routes, netpols) and is
-run via `make test-preflight` when that question is the one being asked.
+`make test` runs `tests/run-all.sh` and prints a table at the end: pass, fail,
+time, result per suite. Nothing uses `set -e` — a suite records a failure and
+keeps going, so one run reports every problem instead of the first.
 
-| Requirement | Suite | Note |
+## The suites
+
+| Command | Suite | Proves |
 |---|---|---|
-| Unit behaviour | `make test-unit` | go test `apps/shop-api` + `apps/notification-api` — saga order, non-fatal steps, cache-aside, handlers, gateways |
-| Routing | `make test-routing` | each path reaches the service that owns it |
-| Route isolation | `make test-route-isolation` | console hosts answered by their own backends, never a storefront route |
-| Mesh CNI + netpol | `make test-mesh` | Cilium is the CNI; a pod with no rule is refused the database |
-| Istio sidecars | `make test-istio` | every api pod carries a ready proxy; east-west mTLS |
-| Auth | `make test-auth` | bad credentials rejected, token opens the API |
-| Checkout | `make test-checkout` | a purchase completes end to end, including the notification leg |
-| Resilience | `make test-resilience` | data and service survive a pod delete |
-| TLS | `make test-tls` | [notes/01](../notes/01-ingress-tls.md) — packet capture shows no plaintext credentials |
-| Observability | `make test-o11y`, `make test-journey` | [notes/07](../notes/07-observability.md) — log → trace → metric, one trace across four services |
-| Cluster matches repo | `make test-preflight` | versions, releases (helm + Argo CD), routes, workloads |
-| Canary load | `make load-test` | k6 generator for the analysis window — not pass/fail, run beside a rollout |
+| `make test-routing` | `routing.sh` | a request reaches the service that owns the path |
+| `make test-route-isolation` | `route-isolation.sh` | a console host is answered by its own backend, never by the storefront |
+| `make test-internal-routes` | `internal-routes.sh` | `/internal/*` is gone, not merely unrouted at the edge |
+| `make test-mesh` | `mesh.sh` | Cilium is the CNI, and a pod with no allow-rule is refused the database |
+| `make test-istio` | `istio.sh` | every api pod carries a ready sidecar; east-west mTLS is STRICT, not assumed |
+| `make test-auth` | `auth.sh` | bad credentials are rejected, the token opens the API |
+| `make test-checkout` | `checkout.sh` | a purchase completes end to end, notification leg included |
+| `make test-o11y` | `o11y-stack.sh` | the observability stack is assembled and receiving |
+| `make test-journey` | `o11y-journey.sh` | one purchase followed log → trace → metric |
+| `make test-tls` | `tls-proof.sh` | tcpdump on the node: the http capture holds the password, the https capture does not |
+| `make test-resilience` | `resilience.sh` | data and service survive a pod delete |
+| `make test-unit` | `unit.sh` | **broken** — points at `../apps/…`; the Go sources live in `rabbit-api`, whose own CI already runs `go test -race` on both modules |
 
-## What the unit tests pin down
+Order in `run-all.sh` is cheapest first. `resilience.sh` is last because it
+deletes pods and takes minutes.
 
-The shell suites prove the deployed cluster; they cannot see the code inside
-the pods. `tests/unit.sh` (and the `*_test.go` files it runs) cover what only
-code-level tests can:
+`routing.sh` fails one check by design mismatch, not by breakage: it expects
+200 on `http://localhost/` and gets the 302 the Gateway is configured to
+send.
 
-- **payment saga order** — validate → create pending → charge → update →
-  mark paid → notify, asserted as a sequence, plus every failure turn: a
-  declined charge marks `failed` and returns the 402 shape; MarkPaid and
-  notify failures are non-fatal by contract
-- **gateways** — wire shapes at the sender: chaos header forwarding, JSON
-  bodies, the 3s notification timeout, status-code-to-error mapping
-- **handlers** — 402 vs 500 vs 400 vs 409 mapping, auth through the real
-  middleware with a signed token
-- **auth** — one sentinel for every bad-credential path, token claims and
-  session keyed by jti
-- **order cache-aside** — hit skips the DB, miss writes back, corrupt cache
-  and dead Redis both degrade instead of fail
-- **notification service** — the store's cap and copy semantics, payload
-  validation, the chaos control plane staying reachable under injected
-  failure (run with `-race` via `go test -race`)
+## The gate that is not a suite
 
-## What actually ran
+```sh
+make test-preflight
+```
 
-| Run | Result |
-|---|---|
-| `go test ./...` — apps/shop-api, apps/notification-api (2026-08-17) | all packages PASS, `-race` clean on notification |
-| cluster suites (2026-08-13) | see the previous run record in git history — needs `make up` first |
+`tests/preflight.sh` asks a different question from the rest: **is what is
+running what the repo declared?** It reads each pinned version out of the
+Makefile and the running value out of the cluster, and prints both. That is why
+it is not in `run-all.sh` — run it when versions, routes or releases are the
+thing in doubt.
 
-The 2026-08-13 numbers predate the notification leg and the unit suite; run
-`make test` against a fresh `make up` to regenerate them rather than trusting
-stale counts.
+Two of its checks fail on the script's own stale paths rather than on the
+cluster: it looks for `platform/scripts/check-image-tags.sh`, which moved to
+`rabbit-gitops/scripts/`, and for a Gateway listener named `websecure`, which
+is named `https`.
 
-## Notes with more detail
+## Load
 
-- [notes/01-ingress-tls.md](../notes/01-ingress-tls.md) — Gateway, TLS, packet capture
-- [notes/03-services-and-data.md](../notes/03-services-and-data.md) — probes, resources, workloads
-- [notes/04-canary-rollout.md](../notes/04-canary-rollout.md) — Argo Rollouts canary, proven both directions
-- [notes/05-gitops-argocd.md](../notes/05-gitops-argocd.md) — ArgoCD sync, self-heal, drift
-- [notes/07-observability.md](../notes/07-observability.md) — LGTM pipeline, correlation, verification detail
-- [notes/08-traefik-netpol-migration.md](../notes/08-traefik-netpol-migration.md) — Istio → Traefik, `demo` → `web`/`api`, NetworkPolicy wired into `make up`
+No Make target. k6 reads its settings from the environment:
+
+```sh
+k6 run tests/k6-shop-load.js       # steady storefront traffic
+k6 run tests/k6-canary-load.js     # traffic for a canary analysis window
+```
+
+Both default to `BASE=https://localhost`, user `alice`, password `password`.
+Neither is pass/fail — they generate the traffic a rollout is judged on.

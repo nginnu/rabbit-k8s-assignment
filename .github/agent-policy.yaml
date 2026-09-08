@@ -20,7 +20,6 @@ unlisted_default: ask
 # alone contributes most of the findings and the report stops being read.
 scan_exclude:
   - 'docs/*'
-  - 'notes/*'
   - '*.md'
 
 tools:

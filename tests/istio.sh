@@ -5,7 +5,7 @@
 # in a sidecar's access log, and east-west mTLS is declared rather than
 # assumed.
 #
-# STRICT is mesh-wide (notes/10-strict-mesh.md): every meshed service must
+# STRICT is mesh-wide (see the Notion design doc): every meshed service must
 # refuse plaintext on its app port, and the only plaintext left in the
 # cluster is Traefik -> istio-ingressgateway:80, kept alive by one
 # port-level exception. Both halves are proven below — the refusal on the
@@ -235,7 +235,7 @@ section "every meshed service refuses plaintext on its app port"
 # STRICT as behaviour, not declaration: the proxy's inbound config for the
 # app port must have no raw_buffer (plaintext) filter chain left. All six
 # meshed services, not just payment and notification — that pair led the
-# migration (notes/09), the rest moved with the mesh-wide rule (notes/10).
+# migration, the rest moved with the mesh-wide rule.
 for entry in "$API_NS auth 9001" "$API_NS catalog 9004" "$API_NS order 9002" \
              "$API_NS payment 7000" "$API_NS notification 8080" "$WEB_NS web-ui 3000"; do
   set -- $entry

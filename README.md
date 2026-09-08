@@ -1,386 +1,185 @@
 # rabbit-k8s-assignment
 
-A reproducible Kubernetes deployment, built locally on kind.
+A reproducible Kubernetes deployment, built locally on kind — a microservices
+platform of six workloads simulating a shirt shop end to end: storefront UI,
+auth, catalog, order, payment, notification. Security in transit throughout:
+TLS at the edge, mTLS through the mesh.
+
+This architecture is designed with production in mind, so moving from the local
+environment to managed cloud services requires minimal changes to the
+application architecture and configuration.
 
 ```
-                              https://localhost/
-                                      │
-                            ┌─────────▼─────────┐
-                            │  Traefik Gateway  │   TLS, local CA
-                            └─────────┬─────────┘
-                                      │
-        ┌──────────────┬──────────────┼──────────────┬──────────────┐
-        ▼              ▼              ▼              ▼              ▼
-   [ web-ui ]    [ auth-svc ]   [ order-svc ]  [ payment-svc ]  [ grafana ]
-    ns: web            │              │              │               │
-                       │              │              ▼               │
-                       │              │       [ payment-gateway ]       │
-                       │              │        ns: api (all four)    │
-                       └──────┬───────┘                              │
-                              ▼                                      │
-                     [ mariadb ] [ redis ]                           │
-                     StatefulSet   sessions                          │
-                       + PVC                                         │
-                                                                     ▼
-   every pod ───── OTLP :4317 ─────► [ alloy ] ─────► [ prometheus · loki · tempo ]
+[ Browser ]
+       │  HTTPS — mkcert CA trusted on the host
+       ▼  host :80 / :443
+┌────────────────────────────────────────────────────────┐
+│ ns: gateway                                            │
+│   Traefik — Gateway "external"                         │
+│     :8000 http  → redirect https                       │
+│     :8443 https → TLS terminate                        │
+└───────────────────────────┬────────────────────────────┘
+                            │  HTTPRoute
+                            ▼
+┌────────────────────────────────────────────────────────┐
+│ ns: istio-system                                       │
+│   Istio Ingress Gateway :80                            │
+└───────────────────────────┬────────────────────────────┘
+                            │
+             ┌──────────────┴───────────────┐             
+             ▼                              ▼             
+┌─────────────────────────┐ ┌────────────────────────────┐
+│ ns: web                 │ │ ns: api                    │
+│   web-ui (Next.js BFF)  │ │   auth · catalog · order   │
+│   :80 → :3000           │ │   :80 → :8080              │
+│                         │ │     ├─► payment            │
+│                         │ │     └─► notification       │
+└────────────┬────────────┘ └────────────────┬───────────┘
+             │                              │             
+             └──────────────┬───────────────┘             
+                            ▼
+┌────────────────────────────────────────────────────────┐
+│ ns: data                                               │
+│   MariaDB :3306                                        │
+│   Redis   :6379                                        │
+└────────────────────────────────────────────────────────┘
 
-   delivery:  Argo Rollouts (canary)  ·  Argo CD (GitOps, https://argocd.localhost)
+   NetworkPolicy      — deny-all per ns, allow only declared peers (Cilium)
+   PeerAuthentication — STRICT, mTLS between every meshed pod
+
+
+┌────────────────────────────────────────────────────────┐
+│ Observability Infrastructure                           │
+└────────────────────────────────────────────────────────┘
+
+  Application Pods (ns: web, api)
+   ├─► Apps ──────────── push OTLP :4317 ────┐
+   ├─► Envoy Sidecar ─── pull HTTP :15020 ───┼─► [ alloy ]
+   └─► istiod ────────── pull HTTP :15014 ───┘      │
+                                                    ├─► [ prometheus ] ───┐
+                                                    │       ▲             │
+                                                    │       │ metric query│
+                                                    │  [ Argo Rollouts ]  ├─► [ grafana ]
+                                                    │  (canary analysis)  │   [ kiali ]
+                                                    ├─► [ loki ] ─────────┤
+                                                    └─► [ tempo ] ────────┘
 ```
 
-Istio is out of this stack — removed completely, no `istiod`, no `istio-system`.
-Traefik owns ingress now (chart `41.2.0`, app `v3.7.10`, namespace `traefik`).
-Istio is planned to come back at a later stage as a service mesh only (sidecar
-injection), never again as the Gateway; that stage has not started.
+## URLs
 
-`make up` ran end to end on 2026-08-13 against this tree: 3 kind nodes Ready,
-every release installed into the namespace its chart declares, every pod
-Running with 0 restarts. The full suite passed after — 51 checks across
-routing, TLS, checkout, resilience and observability; see
-[docs/testing.md](docs/testing.md) for the breakdown. That run was a rebuild
-on a machine that had already built and loaded these images; `make up` on a
-genuinely fresh clone is still unproven (tracked in [TODO.md](TODO.md)).
+- `https://localhost` — the storefront (web-ui)
+- `https://grafana.localhost` — Grafana dashboards
+- `https://kiali.localhost` — Kiali service-mesh console
+- `https://argocd.localhost` — Argo CD (GitOps UI)
+- `https://rollouts.localhost` — Argo Rollouts dashboard
+- `https://traefik.localhost` — Traefik dashboard
+- `https://hubble.localhost` — Hubble UI (Cilium flows)
 
-**What this is** — a shirt shop, deliberately small but split the way a real one
-is: a Next.js frontend, three Go services that call each other, a MariaDB
-StatefulSet and a Redis cache. A purchase touches five services in five
-requests — notification is the fifth, payment-svc's best-effort /notify once a
-payment settles — so there is something real to trace, break, and roll back.
+**Repositories**
 
-Install the prerequisites first: [docs/install.md](docs/install.md). How to
-verify it once it's up: [docs/testing.md](docs/testing.md). What the
-assignment asks for: [docs/goals.md](docs/goals.md). Starting over from a
-clean cluster: [docs/rebuild.md](docs/rebuild.md).
-
-| | | |
-|---|---|---|
-| ![the shop](notes/screenshot/common/Screenshot%202569-08-10%20at%2020.31.57.png) | ![grafana](notes/screenshot/common/Screenshot%202569-08-11%20at%2001.02.01.png) | ![argocd](notes/screenshot/argocd/Screenshot%202569-08-10%20at%2016.06.32.png) |
-| `https://localhost` — log in with `alice` / `password` (any of the seeded users, same password) | `https://grafana.localhost` — anonymous access, opens straight into Admin | `https://argocd.localhost` — user `admin`, password from the chart's generated secret |
-
-```sh
-kubectl -n argocd get secret argocd-initial-admin-secret \
-  -o jsonpath='{.data.password}' | base64 -d
-```
+- [rabbit-api](https://github.com/nginnu/rabbit-api) — Go services: auth · catalog · order · payment · notification
+- [rabbit-web](https://github.com/nginnu/rabbit-web) — Next.js storefront (web-ui)
+- [rabbit-gitops](https://github.com/nginnu/rabbit-gitops) — GitOps config repo: one Helm chart per service · Argo CD ApplicationSet
+- [rabbit-k8s-assignment](https://github.com/nginnu/rabbit-k8s-assignment) — this repo: cluster · addons · OPA policy
 
 ---
 
 ## Deployment use GitOps
 
 ```
-[ Service Repo A ] ──┐
-[ Service Repo B ] ──┤
-[ Service Repo C ] ──┤
-                     │ CI Build & Push Image
-                     ▼
-              [ Container Registry ]
-                     │
-                     │ Update Version
-                     ▼
-             [ GitOps Config Repo ]
-             ─────────────────────
-             app-a/values.yaml
-             app-b/values.yaml
-             app-c/values.yaml
-                     ▲
-                     │ PR / Auto Update
-                     │
-              [ IDP / Platform ]
-              ── Golden Path ──
-                     │
-                     ▼
-                  [ Argo CD ]
-                     │
-             Reconcile Desired State
-                     │
-                     ▼
-              [ Argo Rollouts ]
-             Progressive Delivery
-                     │
-        ┌────────────┼────────────┐
-        ▼            ▼            ▼
-   [ App A ]     [ App B ]     [ App C ]
-     Helm          Helm          Helm
+ APP CODE                CI / BUILD                    RELEASE & DEPLOYMENT
+ ───────────────┐
+  rabbit-api    │
+    auth        │              ┌──────────────────┐
+    catalog     │  git push    │  GitHub Actions  │   push     [ Docker Hub ]
+    order       │ ───────────► │  build · test    │ ─────────►  nginnu/rabbit-*
+    payment     │              │  image           │             tag = git sha
+    notification│              └────────┬─────────┘
+  rabbit-web    │                       │
+    web-ui      │                       │ promote — bump values-ci.yaml
+ ───────────────┘                       │
+                                        │
+                  ┌─────────────────────┴─────────────────────┐
+                  ▼ dev                                       ▼ prod
+        [ auto-promote on merge ]                ┌─────────────────────────┐
+                  │                              │  IDP Portal — planned   │
+                  │                              │  release orchestration  │
+                  │                              │   · schedule date       │
+                  │                              │   · grouping & deps     │
+                  │                              └────────────┬────────────┘
+                  │                                           │
+                  └─────────────────────┬─────────────────────┘
+                                        ▼
+                       ╔════════════════════════════════════╗
+                       ║          rabbit-gitops             ║
+                       ║  one Helm chart per service        ║
+                       ║  ApplicationSet                    ║
+                       ╚════════════════╤═══════════════════╝
+                                        │ validate: gitleaks · helm template
+                                        │           kubeconform · conftest (OPA)
+                                        ▼
+                                   [ Argo CD ]
+                             one Application per service
+                              auto-sync: prune · selfHeal
+                                        │
+                                        ▼
+                                [ Argo Rollouts ]
+                            canary · analysis · rollback
+                                        │
+                                        ▼
+                                 [ kind cluster ]
+                            ≈ GKE — no cloud-specific manifests
+
+ [ rabbit-k8s-assignment ]  platform repo — cluster · addons · OPA policy
+        │ make up (kind + addons)        │ policy/ → conftest above
+        └──────────► kind cluster ◄──────┘
 ```
 
-**Why** — Why do we need it?
+Git is the single source of truth — Argo CD reconciles the cluster to it,
+Argo Rollouts releases step by step and rolls back on metric failure. Zero
+direct access: nothing reaches the cluster except through Git. The result is
+standardized, auditable, reproducible deployments — fast rollback, safer
+releases, reduced blast radius.
 
-To eliminate Configuration Drift, reduce Deployment Inconsistency, and prevent
-unauthorized changes in Production.
+**For more detail** → [Notion — design decisions, test methodology & video demo](https://app.notion.com/p/Rabbit-k8s-Test-3c917d7441dc804087cef2bf311f7686)
 
-**How** — How does it work / Why is it better?
+## Stack
 
-Git is the Desired State and Single Source of Truth. Every change must go
-through a Git PR. Argo CD continuously reconciles the actual environment with
-Git, while Argo Rollouts enables Progressive Delivery.
-
-**What** — What do we get / What problem does it solve?
-
-Standardized, Auditable, Reproducible deployments, fast Rollback, and safer
-Releases with reduced Blast Radius.
-
-**Key Control:**
-
-Zero Direct Access — No direct changes to Production. All changes must go
-through Git PRs.
-
-Details: [GitOps with Argo CD](notes/05-gitops-argocd.md) · [Canary rollout](notes/04-canary-rollout.md) 
+| | Role | Key Impact |
+|---|---|---|
+| **kind** | Multi-node Kubernetes | 3-node cluster on a single machine for production-like testing |
+| **Cilium** | CNI + NetworkPolicy | Enforce network policies with eBPF; model closely aligned with GKE Dataplane V2 |
+| **Hubble** | Network Observability | Real-time visibility into network flows and policy enforcement |
+| **Traefik** | Gateway API Controller | Edge HTTPS termination and routing with an easy-to-use monitoring dashboard |
+| **cert-manager** | TLS | Automated TLS certificates for a production-like local environment |
+| **Istio Ingress Gateway** | Mesh Entry Point | Controlled entry into the service mesh from the edge |
+| **Istio Service Mesh** | Sidecar Mode · mTLS + Traffic Split | Enforce strict mTLS and fine-grained Canary traffic splitting with Argo Rollouts |
+| **Istio DestinationRule** | Circuit Breaker + Retry | Isolate unhealthy upstreams and handle transient failures at the mesh layer |
+| **Argo CD** | GitOps | Git as the Single Source of Truth with automated cluster sync |
+| **Argo Rollouts** | Progressive Delivery | Automated Canary rollout, metric-based analysis, and rollback |
+| **Prometheus** | Metrics | Business metrics as the deployment gate |
+| **Loki** | Logs | Centralized application and infrastructure logs |
+| **Tempo** | Tracing | Distributed tracing across services |
+| **Alloy** | Telemetry Collector | Centralized OTLP collection and routing without backend coupling |
+| **Grafana** | Observability | Unified view of metrics, logs, and traces |
+| **Kiali** | Service Mesh Observability | Real-time service topology and mTLS visibility |
+| **MariaDB** | Database | Persistent application data |
+| **Redis** | Session + Cache | Persistent session and cache layer independent of application pods |
+| **Go × 5** | Backend Services | Independent `auth`, `catalog`, `order`, `payment`, and `notification` services |
+| **Next.js** | Web UI + BFF | BFF layer keeps backend services inaccessible directly from the browser |
 
 ---
 
-## Observability with LGTM
+**For a deeper dive:**
 
-```
-                    [ User ]
-                       │
-                       ▼
-                    [ Web ]
-                       │
-                trace_id / session_id/order_id
-                       │
-          ┌────────────┼─────────────┐
-          ▼            ▼             ▼
-       [ Auth ]    [ Product ]    [ Order ]
-                                      │
-                                      ▼
-                                  [ Payment ]
+- [Blog — the build, decision by decision (Notion)](https://app.notion.com/p/Rabbit-k8s-Test-3c917d7441dc804087cef2bf311f7686)
+- [Video — presentation & demo](https://app.notion.com/p/Rabbit-k8s-Test-3c917d7441dc804087cef2bf311f7686)
 
-                       │
-                       ▼
-
-                [ Observability ]
-                       │
-          ┌────────────┼────────────┐
-          ▼            ▼            ▼
-       [ Logs ]     [ Metrics ]   [ Traces ]
-          │            │             │
-          └────────────┼─────────────┘
-                       ▼
-            [ Grafana / Loki / Tempo
-                  / Prometheus ]
-
-
-        ─────── Optional Trace Propagation ───────
-        trace_id can be propagated across
-        Microservices when distributed tracing
-        is required.
-```
-
-**Correlation:**
-
-```
-  session_id + user_id → User Journey / Session-level analysis
-  trace_id              → Request / Distributed tracing
-```
-
-I use session_id and user_id for user-journey correlation. Trace ID
-propagation across services is also supported when distributed tracing is
-required — see [Correlation](notes/07-observability.md#correlation--the-part-that-makes-it-usable)
-in [notes/07 — observability](notes/07-observability.md).
-
----
-
-## TLS Encryption
-
-**Why** — Why do we need it?
-
-To protect data in transit by encrypting communication and preventing
-unauthorized parties from reading or modifying traffic.
-
-**How** — How does it work / Why is it better?
-
-For local development, I use mkcert as a trusted local CA, with cert-manager
-issuing the certificate to the Traefik Gateway on port 443. In Production, I
-would terminate TLS at the Edge/Load Balancer and use Gateway API for
-standardized traffic routing.
-
-**What** — What do we get / What problem does it solve?
-
-Encrypted communication at the Edge, and mTLS (STRICT, mesh-wide) for
-service-to-service communication — every workload carries its own SPIFFE
-identity, and plaintext is refused rather than merely avoided
-([notes/10](notes/10-strict-mesh.md)).
-
-**Production Extension:**
-
-mTLS on the last plaintext hop — Traefik still hands plain HTTP to the
-chained istio-ingressgateway on port 80 (the one port-level exception
-STRICT carries); re-encrypting that hop needs a sidecar on the Traefik pod.
-
-**Scope Note:**
-
-This implementation is intentionally simplified for a local environment. The
-Production design would extend the same security model with Edge TLS and
-service-to-service mTLS.
-
-```
-                    Production Should Be
-
-[ Client ]
-    │
-    │ HTTPS / TLS
-    ▼
-[ Edge / Load Balancer ]
-    │
-    │ TLS
-    ▼
-[ Gateway API ]
-    │
-    │ Routing
-    ├───────────────┐
-    ▼               ▼
-[ Service A ] ──mTLS──► [ Service B ]
-    │                     │
-    └──────── mTLS ───────┘
-```
-
-Local proof — packet capture showing no plaintext credential crosses the
-wire once TLS is on: [ingress + TLS proof](notes/01-ingress-tls.md#result).
-That capture ran against the Istio Gateway, before the Traefik switch. Re-run
-against Traefik on 2026-08-13 (`tls-proof.sh`, 4/4 PASS): chain still verifies
-against the system trust store, http still leaks the password, https still
-carries none — see [docs/testing.md](docs/testing.md).
-
----
-
-## NetworkPolicy
-
-Production should be —
-
-```
-                         PUBLIC / INTERNET
-                               │
-                               │ North-South
-                               ▼
-                    ┌─────────────────────┐
-                    │      [ Gateway ]    │
-                    │   Public Entry Point │
-                    └──────────┬──────────┘
-                               │
-                 ┌─────────────┼─────────────┐
-                 │             │             │
-                 ▼             ▼             ▼
-             [ web-ui ]    [ grafana ]   [ argocd ]
-              Internal      Internal       Internal
-                 │
-                 │
-          ┌──────┴──────────────────────────────┐
-          │        EAST-WEST / INTERNAL          │
-          │                                      │
-          ▼              ▼               ▼       │
-      [ auth ]        [ order ]      [ payment ] │
-          │              │               │       │
-          └──────────────┼───────────────┘       │
-                         │                       │
-                         ▼                       │
-                  [ mariadb / redis ]            │
-                         │                       │
-                         └── Internal ───────────┘
-
-
-      ─────────────── OBSERVABILITY ─────────────────
-
-             [ every pod ]
-                  │
-                  │ OTLP
-                  ▼
-               [ alloy ]
-                  │
-        ┌─────────┼─────────┐
-        ▼         ▼         ▼
- [ prometheus ] [ loki ] [ tempo ]
-```
-
-**NetworkPolicy principle:**
-
-The Gateway is the single north-south entry point. Backend services are not
-directly exposed through the Gateway. East-west traffic is explicitly
-allowed only between required services, and the data tier is isolated from
-the Gateway.
-
-## Current Assignment — where this stands
-
-`demo` is gone. The frontend and the five backend workloads are split into two
-namespaces so a NetworkPolicy peer can be written by namespace instead of by
-naming every pod (`kubernetes.io/metadata.name` on the namespace, set by the
-API server, not a hand-applied label — see `platform/manifests/apps/web/namespace.yaml`).
-
-```
-                              https://localhost/
-                                      │
-                            ┌─────────▼─────────┐
-                            │  Traefik Gateway  │
-                            └─────────┬─────────┘
-                                      │
-   ═══ namespace: web ═══                ═════════════ namespace: api ════════════════
-   ║        │           ║                ║        │                                 ║
-   ║        ▼           ║                ║   ┌────┼────────┬─────────┬────────────┐ ║
-   ║   [ web-ui ]        ║                ║   ▼    ▼        ▼         ▼            ▼ ║
-   ║   ingress: gateway  ║                ║ [auth][order]◄►[payment][notification]  ║
-   ║   egress: alloy     ║                ║              start/settle,             ║
-   ╚═════════════════════╝                ║              both ways                 ║
-                                           ║                  │                     ║
-                                           ║                  ▼                     ║
-                                           ║           [ payment-gateway ]             ║
-                                           ║           no gateway ingress           ║
-                                           ╚═════════════════════════════════════════╝
-              default-deny both directions on all six — every peer above is a
-              named service or namespace in the chart's networkPolicyPeers,
-              not an open namespace
-                    │                                    │
-      (auth,order,payment → mariadb/redis)        (all six → alloy)
-                    │                                    │
-   ═══════ namespace: data ═══════════════════   ═══ namespace: observability ═══
-   ║                ▼                        ║   ║              ▼               ║
-   ║   ingress from named pods only:          ║   ║   alloy ingress: api ns     ║
-   ║   [ mariadb :3306 ] ← auth, order, payment║  ║   grafana ingress: gateway  ║
-   ║   [ redis :6379 ] ← auth, order (not payment)║ prometheus/loki/tempo: internal║
-   ║   egress: DNS only                        ║  ║   egress: DNS + each other  ║
-   ╚═══════════════════════════════════════════╝  ╚═══════════════════════════════╝
-```
-
-Every service chart under `charts/apps/` now sets `networkPolicy: true` — this
-replaces an earlier version of this project where the app tier had the peers
-declared in `values.yaml` but no enforcement, so every pod in one shared
-namespace could reach every other regardless of what was declared. That was
-wrong to leave standing once `data` and `observability` had real enforcement
-next to it.
-
-Run on 2026-08-13: `make up` applies all of it (`local/data/netpol.yaml` and
-`addons/observability/netpol.yaml` are wired into the `data` and `observability`
-targets), `kubectl get netpol -A` showed policies in every namespace above,
-and the full 51-check suite — which exercises every allowed path in the
-diagram — passed with 0 pod restarts. That proves the allow rules are not
-blocking traffic that should get through. It does not prove the default-deny
-half of the claim: no suite here sends traffic down a path this policy should
-reject. `TODO.md` tracks the deny-path test as still open.
-
-In a cloud-native environment, the same principle applies at the network
-layer: separate public and private subnets appropriately, with Security
-Group / Firewall rules between them, exposing only the required entry points
-and keeping backend and data tiers private.
-
----
+<br><br><br><br><br><br><br><br>
 
 ## Notes
 
 | Doc | How to |
 |---|---|
-| [docs/install.md](docs/install.md) | install the prerequisites |
-| [docs/rebuild.md](docs/rebuild.md) | tear down and rebuild the cluster |
+| [docs/install.md](docs/install.md) | run it from a fresh clone — nine steps, in order |
 | [docs/testing.md](docs/testing.md) | verify it once it's up |
-
-| Note | What it covers |
-|---|---|
-| [notes/01 — ingress + TLS](notes/01-ingress-tls.md) | Gateway, mkcert CA, cert-manager, packet-capture proof |
-| [notes/03 — services and data](notes/03-services-and-data.md) | workloads, probes, resources, MariaDB + Redis |
-| [notes/04 — canary rollout](notes/04-canary-rollout.md) | Argo Rollouts on order-svc, proven both directions |
-| [notes/05 — GitOps with Argo CD](notes/05-gitops-argocd.md) | auto-sync and selfHeal on the notification service (written before its rename) |
-| [notes/07 — observability](notes/07-observability.md) | LGTM pipeline, correlation, verification detail |
-| [notes/08 — Traefik + NetworkPolicy migration](notes/08-traefik-netpol-migration.md) | Istio → Traefik, `demo` → `web`/`api`, NetworkPolicy wired into `make up` |
-
-**Honest note:** due to the limited time available, this implementation
-focuses primarily on the core Kubernetes setup and functionality rather than
-detailed production-level refinement. Most of the main components are
-implemented and working, although some areas may still contain bugs, errors,
-or require further improvement and hardening.
-
----

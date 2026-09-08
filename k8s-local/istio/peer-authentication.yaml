@@ -16,10 +16,10 @@
 # spelling spec.mtls out (rather than relying on field inheritance from the
 # mesh-level rule) keeps the exception's meaning local to this file.
 #
-# Residual plaintext surface, accepted and recorded in notes/10-strict-mesh.md:
+# Residual plaintext surface, accepted and recorded in the Notion design doc:
 # the Traefik -> gateway hop itself is still plain HTTP on the pod network.
 # Closing it needs a sidecar on the Traefik pod with its hostPorts excluded
-# from capture — the notes/09 follow-up, still deferred.
+# from capture — that follow-up is still deferred.
 #
 # The workload-scoped STRICT rules for payment and notification are gone:
 # this rule supersedes them. `make istio` deletes the old objects, which
